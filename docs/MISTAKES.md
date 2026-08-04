@@ -152,3 +152,21 @@ questioned.
 before being used. The corrected split is materially better news for CV — `6bba` is a substantial
 fold, not a 24-sample afterthought — which is exactly why the wrong number would have skewed
 planning toward distrusting that fold.
+
+---
+
+## M011 — Kaggle derives the kernel slug from the title, not from the id you set
+**Date:** 2026-08-03
+**What happened.** `kernel-metadata.json` set `"id": "homeshwarrao/biohub-submission-v1"` with
+`"title": "Biohub Submission v1 - confidence-ordered edges"`. Kaggle created the kernel at
+**`biohub-submission-v1-confidence-ordered-edges`** — slugified from the title — and ignored the id,
+emitting only a warning. The push reported success and even printed the intended URL, so it looked
+fine. Every later `kernels_status()` call against the intended slug then failed with a 403, whose
+message suggests a permissions problem rather than a naming one.
+**Why.** The id field was assumed to be authoritative, and the warning on push was skimmed past
+because the command exited zero and printed a plausible URL.
+**Change.** `tools/make_submission_notebook.py` now has a `slugify()` helper and refuses to build
+unless `slugify(TITLE) == SLUG`. Titles are kept short and slug-shaped; descriptive detail goes in the
+commit message and the experiment log, not the notebook title. General rule: when a push warns, read
+the warning even if the exit code is zero.
+

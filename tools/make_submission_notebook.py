@@ -22,8 +22,30 @@ BASELINE = REPO / "notebooks" / "biohub" / "biohub.ipynb"
 OUT_DIR = REPO / "notebooks" / "submission-v1"
 
 SLUG = "biohub-submission-v1"
-TITLE = "Biohub Submission v1 - confidence-ordered edges"
+# Kaggle derives the kernel slug from the TITLE and quietly ignores a non-matching id in
+# kernel-metadata.json - it only emits a warning. A title of
+# "Biohub Submission v1 - confidence-ordered edges" created the kernel at
+# `biohub-submission-v1-confidence-ordered-edges`, and every subsequent status call against
+# the intended slug returned 403. Keep the title such that slugify(TITLE) == SLUG; the
+# assertion below enforces it.
+TITLE = "Biohub Submission v1"
 COMPETITION = "biohub-cell-tracking-during-development"
+
+
+def slugify(title: str) -> str:
+    """Approximate Kaggle's title -> slug derivation."""
+    out = [c.lower() if c.isalnum() else "-" for c in title]
+    slug = "".join(out)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-")
+
+
+if slugify(TITLE) != SLUG:
+    raise SystemExit(
+        f"TITLE {TITLE!r} slugifies to {slugify(TITLE)!r}, not {SLUG!r}. "
+        "Kaggle would create the kernel at the slugified title and the id would be ignored."
+    )
 
 # Attached model/support datasets, carried over from the baseline notebook. Required
 # because submission notebooks run with internet disabled.
