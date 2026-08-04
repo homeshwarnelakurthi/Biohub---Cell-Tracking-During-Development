@@ -34,6 +34,7 @@ docs/
   METRIC_ANALYSIS.md   Exploitable structure in the official scorer — read before changing anything
   STRATEGY.md          Standing, score decomposition, ranked levers, 57-day plan
   COMPETITION.md       Task, data format, rules, timeline, submission format
+  LITERATURE.md        Methods from the literature mapped onto our specific levers
   MISTAKES.md          Running log of errors and what changed as a result
   source/Biohub.md     Archived scrape of the competition page (2026-07-03) — stale, see M002
 src/biocell/
