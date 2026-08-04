@@ -199,3 +199,21 @@ General rule: when forking a working configuration, diff the *whole* metadata ag
 re-deriving the fields that seem relevant. The setting that breaks you is the one you did not know
 was load-bearing.
 
+---
+
+## M013 — `competition_submit_code` 403s when `kernel_version` is omitted
+**Date:** 2026-08-04
+**What happened.** Submitting E004 through `competition_submit_code(file_name, message,
+competition, kernel)` returned a bare `403 Client Error: Forbidden` from
+`CreateCodeSubmission`. The notebook was correctly configured — competition attached, internet off,
+run COMPLETE, valid `submission.csv` — so the 403 read as an account or permissions problem and sent
+me checking rules acceptance, `submissions_disabled` and notebook privacy first. Passing
+`kernel_version=1` made the identical call succeed immediately.
+**Why.** `kernel_version` is typed `Optional[int]` in the signature and documented as optional, but
+the endpoint rejects the request without it. Kaggle does not surface the version number through
+`kernels_status()` or the pulled `kernel-metadata.json`, so there is nothing obvious to pass.
+**Change.** `tools/submit.py` now walks `kernel_version` upward from 1 until one is accepted and
+reports which version went through. General note: a 403 from this API is not reliably an
+authorisation failure — check for missing required-but-optional-looking parameters before assuming
+a permissions problem.
+

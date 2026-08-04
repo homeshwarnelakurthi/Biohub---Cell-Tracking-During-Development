@@ -84,6 +84,8 @@ def main() -> int:
     p.add_argument("--message", default="", help="submission description")
     p.add_argument("--check", action="store_true", help="verify only, never submit")
     p.add_argument("--keep", action="store_true", help="keep the downloaded output")
+    p.add_argument("--max-version", type=int, default=8,
+                   help="highest kernel version to try when submitting")
     args = p.parse_args()
 
     api = _api()
@@ -120,14 +122,30 @@ def main() -> int:
             return 1
 
         print(f"\nsubmitting to {COMPETITION} ...")
-        resp = api.competition_submit_code(
-            file_name=SUBMISSION_FILE,
-            message=args.message,
-            competition=COMPETITION,
-            kernel=args.kernel,
-        )
-        print("response:", getattr(resp, "message", resp))
-        return 0
+        # kernel_version is typed Optional, but omitting it makes CreateCodeSubmission
+        # return a bare 403 with no explanation - it is effectively required. Kaggle does
+        # not expose the version number through kernels_status or the pulled metadata, so
+        # walk upward from 1 until one is accepted.
+        last_error: Exception | None = None
+        for version in range(1, args.max_version + 1):
+            try:
+                resp = api.competition_submit_code(
+                    file_name=SUBMISSION_FILE,
+                    message=args.message,
+                    competition=COMPETITION,
+                    kernel=args.kernel,
+                    kernel_version=version,
+                )
+            except Exception as exc:  # noqa: BLE001 - reported below if all versions fail
+                last_error = exc
+                print(f"  version {version}: rejected ({type(exc).__name__})")
+                continue
+            print(f"  version {version}: accepted")
+            print("response:", getattr(resp, "message", resp) or "(empty)")
+            return 0
+
+        print(f"\nAll versions 1..{args.max_version} rejected. Last error:\n  {last_error}")
+        return 1
     finally:
         if not args.keep:
             shutil.rmtree(dest, ignore_errors=True)
