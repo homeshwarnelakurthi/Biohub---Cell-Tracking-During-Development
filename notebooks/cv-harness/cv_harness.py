@@ -68,22 +68,41 @@ assert _np_after.__version__ == np.__version__, (
 print("numpy still", _np_after.__version__)
 
 
-def find_train_dir() -> Path:
-    """Locate the competition train directory without hardcoding the mount name.
+def find_train_dir(max_depth: int = 4) -> Path:
+    """Locate the competition train directory without hardcoding the mount layout.
 
-    The previous run printed `train geffs: 0` because the assumed path was wrong, so the
-    harness would have scored nothing even once the imports were fixed. Fail loudly here
-    instead.
+    Two runs have now been lost to path assumptions: first a hardcoded slug path that
+    silently yielded zero samples, then a one-level search that missed the real nesting
+    (`/kaggle/input/competitions/<slug>/train`). So walk the tree instead of guessing, and
+    prefer a directory literally named `train` when several contain geffs — the others
+    would be `test`, which has no ground truth.
     """
-    roots = sorted(Path("/kaggle/input").glob("*"))
-    print("mounted inputs:", [r.name for r in roots])
-    for root in roots:
-        for cand in (root / "train", root):
-            if cand.is_dir() and any(cand.glob("*.geff")):
-                return cand
-    raise FileNotFoundError(
-        f"no directory containing *.geff under /kaggle/input; saw {[r.name for r in roots]}"
-    )
+    root = Path("/kaggle/input")
+    print("mounted inputs:", [p.name for p in sorted(root.glob("*"))])
+
+    found: list[Path] = []
+    stack = [(root, 0)]
+    while stack:
+        d, depth = stack.pop()
+        if depth > max_depth:
+            continue
+        try:
+            children = list(d.iterdir())
+        except (PermissionError, OSError):
+            continue
+        if any(c.name.endswith(".geff") for c in children):
+            found.append(d)
+            continue  # no need to descend further into a sample directory
+        stack.extend((c, depth + 1) for c in children if c.is_dir())
+
+    if not found:
+        raise FileNotFoundError(f"no directory containing *.geff under {root} (depth<={max_depth})")
+
+    print("dirs containing geffs:", [str(p) for p in found])
+    for p in found:
+        if p.name == "train":
+            return p
+    return found[0]
 
 
 TRAIN = find_train_dir()
@@ -226,32 +245,27 @@ print("\nplumbing OK")
 # %%
 import random
 
-# The tracksdata graph API is not fully documented, so print the real surface once rather
-# than guessing at method names a second time. Whatever this shows drives the next revision.
-_probe = load_graph(TRAIN / f"{sanity_names[0]}.geff")
-print("IndexedRXGraph methods:")
-print("  ", sorted(m for m in dir(_probe) if not m.startswith("_")))
-print("node_attrs columns:", list(_probe.node_attrs().columns))
-print("edge_attrs columns:", list(_probe.edge_attrs().columns))
-print("num_nodes/num_edges:", _probe.num_nodes(), _probe.num_edges())
+# API verified against tracksdata 0.1.0rc7 locally: IndexedRXGraph has no subgraph(), but
+# it does have copy() and bulk_remove_nodes(Sequence[int]). Removing a node drops its
+# incident edges, which is the semantics we want.
 
 
 def drop_nodes(graph, keep_fraction, seed=0):
-    """Return a copy of `graph` with a random `keep_fraction` of nodes kept.
+    """Return a copy of `graph` with a random `keep_fraction` of its nodes kept.
 
-    Uses `subgraph` when available and falls back to rebuilding node by node. Raises on
-    failure so stage 2 can report honestly rather than silently scoring the wrong thing.
+    Deterministic given `seed`, so the sweep compares like with like across keep levels.
     """
     ids = list(graph.node_ids())
+    n_drop = len(ids) - max(1, int(round(len(ids) * keep_fraction)))
+    if n_drop <= 0:
+        return graph.copy()
+
     rng = random.Random(seed)
-    keep = sorted(rng.sample(ids, max(1, int(round(len(ids) * keep_fraction)))))
+    drop = rng.sample(ids, n_drop)
 
-    if hasattr(graph, "subgraph"):
-        return graph.subgraph(node_ids=keep)
-
-    raise NotImplementedError(
-        "no subgraph() on this graph type; inspect the method list printed above"
-    )
+    new = graph.copy()
+    new.bulk_remove_nodes(sorted(drop))
+    return new
 
 
 KEEP_GRID = [1.0, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.60, 0.50]
