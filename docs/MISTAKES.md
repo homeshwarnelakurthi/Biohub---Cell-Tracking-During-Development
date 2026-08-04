@@ -113,3 +113,42 @@ zero count was printed but not asserted on — so it would have scrolled past as
 actually contains `*.geff`, prints what it found and the per-embryo counts, and asserts non-empty.
 General rule: every input path is discovered and asserted, never assumed. A count of zero is an
 error, not a log line.
+
+---
+
+## M009 — Ranked the node-budget lever first on the strength of a simulation
+**Date:** 2026-08-03 (claimed), corrected same day by run 3 of `biohub-cv-harness`
+**What happened.** METRIC_ANALYSIS and STRATEGY both called the node-budget sweep "the highest
+expected-value item" and "potentially the largest single gain". That ranking came from a sweep with
+*invented* inputs — an assumed 35/65 TP/FP split in the pruned tail — which produced a headline
++0.047. No part of that was measured.
+
+Then the harness measured the real quantities. `estimated_number_of_nodes` is 15k–64k per sample
+against 51–788 annotated nodes, so the multiplier coefficient is `0.1/N_true ≈ 3.8e-6` per node.
+Trimming a thin confidence tail is worth ~0.0017, not 0.047. The lever is real but its shape is
+completely different from what was claimed: it pays only at large node counts, and the actual
+argument for it is that ~99% of predicted nodes are metric-invisible yet still charged.
+
+**Why.** A plausible mechanism was found in the scorer source and then quantified with placeholder
+numbers, and the placeholder number got carried into a ranking as if it were evidence. The simulation
+was labelled illustrative in the code comment but not in the conclusion, which is where it mattered.
+
+**Change.** Levers do not get ranked before they are measured — an unmeasured lever is listed as
+unresolved, with the mechanism stated and the magnitude explicitly marked unknown. When a number
+comes from assumed inputs, the assumption goes in the same sentence as the number, not in a footnote.
+
+---
+
+## M010 — Counted training samples from a truncated API listing
+**Date:** 2026-08-03
+**What happened.** Enumerating competition files via the Kaggle API returned 12,000 entries, from
+which the training set was reported as 95 samples (`44b6` × 71, `6bba` × 24). The actual mount shows
+**199 samples — `44b6` × 71, `6bba` × 128**. The listing had been silently truncated by pagination,
+and `6bba` was undercounted by more than 5×.
+**Why.** The pagination loop terminated on a falsy `next_page_token` without checking whether the
+returned count had hit a server-side cap, and the resulting number looked plausible so it was not
+questioned.
+**Change.** Counts that come from a paginated API are cross-checked against the mounted filesystem
+before being used. The corrected split is materially better news for CV — `6bba` is a substantial
+fold, not a 24-sample afterthought — which is exactly why the wrong number would have skewed
+planning toward distrusting that fold.

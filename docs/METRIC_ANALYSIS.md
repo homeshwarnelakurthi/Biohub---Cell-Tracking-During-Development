@@ -45,15 +45,57 @@ the multiplier exceeds 1.0:
 | 0.50              | 1.050      |
 
 So **emitting fewer nodes is directly rewarded**, independently of whether those nodes were correct.
-Pruning the least-confident tail of detections trades edge recall (Jaccard down) against the
-multiplier (up), and because the low-confidence tail is FP-enriched, the Jaccard often goes *up* too
-over the first stretch of pruning. There is a well-defined interior optimum.
 
-This is the single cheapest lever available: it is pure post-processing on an existing submission,
-needs no retraining, and no GPU. `src/biocell/node_budget.py` finds the optimum from held-out counts.
+### How big is this really? (measured 2026-08-03, run 3 of `biohub-cv-harness`)
 
-> Caveat: the size of the gain depends entirely on the FP-composition of *our* confidence tail,
-> which has to be measured on real predictions. Do not assume a number before measuring it.
+`N_true` is `estimated_number_of_nodes`, and it is enormous relative to the annotations:
+
+| sample | annotated nodes | `estimated_number_of_nodes` | density |
+| --- | --- | --- | --- |
+| `44b6_0113de3b` | 52 | 26,000 | 0.20% |
+| `44b6_0b24845f` | 51 | 31,875 | 0.16% |
+| `44b6_0c582fdc` | 71 | 28,400 | 0.25% |
+| `44b6_0db75fae` | 157 | 15,392 | 1.02% |
+| `44b6_12dfb391` | 788 | 58,806 | 1.34% |
+| `44b6_144b256d` | 121 | 63,684 | 0.19% |
+
+**Ground truth annotates 0.16–1.34% of cells.** Two consequences, and they pull in opposite
+directions:
+
+The multiplier coefficient per node is `0.1 / N_true`, which at `N_true ≈ 26,000` is 3.8e-6 —
+tiny per node. Dropping 500 nodes is worth about +0.0017; dropping 10,000 is worth about +0.035.
+So the lever only pays at *large* node counts, not from trimming a thin confidence tail.
+
+But combined with property 2 below, ~99% of predicted nodes match no GT node at all. Those nodes
+contribute nothing to edge TP/FP/FN — they are invisible to the Jaccard — **while still counting
+against `num_pred_nodes`**. Every metric-invisible node we emit is pure multiplier loss with no
+offsetting benefit.
+
+That is the real shape of this lever: not "trim the low-confidence tail", but "we are probably
+paying multiplier for a very large number of nodes that cannot earn anything back".
+
+### What the GT experiment showed, and why it does not settle the question
+
+Dropping nodes from clean ground truth and re-scoring gave a strictly decreasing curve — best
+keep-fraction 1.00, i.e. pruning only ever lost:
+
+| keep | edge J | adj edge J |
+| --- | --- | --- |
+| 1.00 | 1.000 | 1.099 |
+| 0.95 | 0.901 | 0.990 |
+| 0.90 | 0.809 | 0.890 |
+| 0.75 | 0.552 | 0.607 |
+
+This is a **degenerate worst case, not a bound**. In ground truth every node is annotated, so every
+removal destroys real edges (−0.099 J for +0.0002 multiplier at the 5% step). Real predictions are
+~99% metric-invisible nodes, which is the opposite regime. The experiment confirms the mechanism and
+the slope; it says nothing about the operating point.
+
+> **The honest state: this lever is unresolved and cannot be settled without real predictions.**
+> An earlier version of this document called it "the highest expected-value item" on the strength of
+> a simulation with invented FP fractions. That was overstated — see MISTAKES M009. It needs stage 3
+> of the harness against actual pipeline output. `src/biocell/node_budget.py` does the sweep once
+> those exist.
 
 ### 2. False positives are only charged in annotated territory
 
@@ -72,9 +114,17 @@ GT node has `pred_valid == False` and is excluded from the FP count entirely.
 Because GT is sparse, **predicted edges in unannotated regions are invisible to the edge Jaccard.**
 They cost nothing in FP. Their only cost is through `num_pred_nodes` in property 1.
 
+Measured annotation density is **0.16–1.34%** (table in property 1), so this is not a marginal
+effect: the overwhelming majority of what the pipeline predicts is scored only through the node
+count, never through edge precision.
+
 Consequence: the linking threshold should not be tuned as if every spurious edge were punished. The
 real currency is *node budget*, not edge precision. Aggressive linking on top of a tight node budget
 is strictly better than timid linking on a loose one.
+
+A second consequence, less obvious: because only ~1% of nodes can earn TP, the edge Jaccard is
+estimated from a very small annotated subsample. Per-sample Jaccards will be noisy, which is another
+reason to require both embryo folds to agree before shipping anything.
 
 ### 3. Out-degree is truncated by edge ID, not by confidence
 
@@ -122,20 +172,26 @@ division that is topologically right but whose daughters merge back is scored as
 
 Ranked by (expected gain) / (GPU hours), highest first:
 
-1. **Confidence-ordered edge IDs** — zero cost, removes a random-truncation loss (property 3).
-2. **Node-budget sweep** on existing predictions — no GPU, potentially the largest single gain
-   (property 1). Must be validated per-embryo, not on the public LB.
+1. **Confidence-ordered edge IDs** — zero cost, removes a random-truncation loss (property 3). The
+   only item here whose sign is known in advance.
+2. **Node-budget sweep** on real predictions — no GPU. Size unknown and unresolvable without stage 3;
+   the mechanism is confirmed but the operating point is not (property 1).
 3. **Division precision/recall tuning** — the term is only 0.1-weighted but the gap we need is 0.034
    (property 5).
 4. **Re-tuning link aggressiveness upward** now that FP is known to be nearly free in unannotated
    regions (property 2).
 5. Retraining detectors — most expensive, do last.
 
+Items 2–4 all now depend on the same missing input: predicted geffs for the training samples. That
+makes producing them the critical path, not any of the levers themselves.
+
 ## Validation constraint that governs all of it
 
-Train contains **two embryos only**: `44b6` (71 samples) and `6bba` (24 samples). Train and test are
-embryo-disjoint, and the hidden test set is a *different* embryo. Any CV that splits randomly across
-samples leaks embryo identity and will overstate every result above.
+Train contains **two embryos only**: `44b6` (71 samples) and `6bba` (128 samples), 199 total —
+counted from the actual Kaggle mount, which supersedes the truncated file-listing estimate of 95 that
+earlier drafts used. Train and test are embryo-disjoint, and the hidden test set is a *different*
+embryo. Any CV that splits randomly across samples leaks embryo identity and will overstate every
+result above.
 
 The only honest protocol is **leave-one-embryo-out (2-fold)**: fit on `44b6`, score on `6bba`, and
 the reverse. Two folds is a weak signal, so prefer changes that win on *both* folds and are robust to

@@ -40,15 +40,15 @@ Ground truth (training only) is a `.geff` directory, also Zarr v3:
 `estimated_number_of_nodes` field in the `.geff` metadata estimates the true total cell count per
 sample, and it is what the node-count penalty is measured against.
 
-### Sample inventory (from the Kaggle file listing)
+### Sample inventory (counted from the mounted dataset)
 
 | Split | Samples | Embryos |
 | --- | --- | --- |
-| train | 95 | `44b6` (71), `6bba` (24) |
+| train | 199 | `44b6` (71), `6bba` (128) |
 | test (visible) | 4 | copies from train — no ground truth |
 
 Folder names are `{embryo_id}_{field_of_view}`. **Train and test are embryo-disjoint**; the hidden
-test set is swapped in at rerun and is roughly the size of the training set (~95 samples). Public LB
+test set is swapped in at rerun and is roughly the size of the training set (~199 samples). Public LB
 is 29% of it, private LB the remaining 71%.
 
 Total dataset size: 87.61 GB, 24,886 files, CC0 licensed.

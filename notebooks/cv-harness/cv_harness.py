@@ -208,8 +208,27 @@ def fold_summaries(rows):
 # quantifies how much headroom METRIC_ANALYSIS property 1 leaves.
 
 # %%
-SANITY_N = 6
-sanity_names = sorted(p.stem for p in TRAIN.glob("*.geff"))[:SANITY_N]
+SANITY_PER_EMBRYO = 4
+
+# Stratify across embryos. Taking the first N sorted names put every sample in `44b6`,
+# which defeats the entire point of a per-embryo harness.
+_by_embryo = defaultdict(list)
+for p in sorted(TRAIN.glob("*.geff")):
+    _by_embryo[embryo_of(p.stem)].append(p.stem)
+sanity_names = [nm for e in sorted(_by_embryo) for nm in _by_embryo[e][:SANITY_PER_EMBRYO]]
+print("sanity samples:", sanity_names)
+
+# How sparse is the ground truth really? estimated_number_of_nodes is what the node
+# penalty is measured against, and the gap between it and the annotated count decides
+# whether the node-budget lever is worth anything.
+print("\nannotation density (annotated nodes vs estimated true total):")
+for nm in sanity_names:
+    gp = TRAIN / f"{nm}.geff"
+    g = load_graph(gp)
+    nt = read_n_total(gp)
+    print(f"  {nm:<32} annotated={g.num_nodes():>6}  est_true={nt:>12,.0f}  "
+          f"{100 * g.num_nodes() / nt:>6.2f}%" if nt == nt and nt > 0 else
+          f"  {nm:<32} annotated={g.num_nodes():>6}  est_true=NaN")
 
 sanity_rows = []
 for nm in sanity_names:
@@ -228,19 +247,20 @@ assert all(abs(r["edge_jaccard"] - 1.0) < 1e-9 for r in sanity_rows), \
 print("\nplumbing OK")
 
 # %% [markdown]
-# ## Stage 2 - node-budget curve
+# ## Stage 2 - node-budget curve (degenerate worst case, read the caveat)
 #
 # The adjusted Jaccard is `max(0, J * (1 - 0.1 * (N_pred - N_true)/N_true))`, clamped only
 # at the bottom, so under-predicting nodes multiplies the score upward.
 #
-# Here we drop a fraction of GT nodes (and every edge touching them) and re-score. This
-# gives the **pure cost** side of the trade: how fast Jaccard falls per node removed, with
-# no FP-removal benefit, because ground truth has no false positives to remove. Real
-# predictions have an FP-enriched tail, so the true optimum sits at *more* aggressive
-# pruning than whatever this curve suggests.
+# Dropping GT nodes measures the **cost** side. But note what this curve is and is not:
+# in ground truth, *every* node is annotated, so every removal destroys real edges. In real
+# predictions the annotation density above is on the order of 1%, so ~99% of predicted
+# nodes match no GT node at all and are invisible to edge TP/FP/FN while still counting
+# against `num_pred_nodes`.
 #
-# In other words this measures the conservative bound. If pruning already looks profitable
-# against clean GT, it is unambiguously profitable against real predictions.
+# So this curve is a **degenerate worst case**, not a usable bound - it is the most hostile
+# possible setting for pruning. It is worth running only to confirm the mechanism and the
+# slope. The number that actually matters comes from stage 3 on real predictions.
 
 # %%
 import random
@@ -302,8 +322,9 @@ elif curve:
     print(f"\nbest keep_fraction on clean GT: {best[0]:.2f} "
           f"(adj_edge={best[1]['adj_edge_jaccard']:.4f} vs {baseline:.4f} at keep=1.0, "
           f"delta {best[1]['adj_edge_jaccard'] - baseline:+.4f})")
-    print("Clean GT has no false positives to remove, so this is the conservative bound:")
-    print("the optimum on real predictions sits at or below this keep fraction, never above.")
+    print("Expected result is keep=1.00: on fully-annotated GT every removal destroys real")
+    print("edges, so pruning can only lose. This confirms the slope, and says nothing about")
+    print("real predictions where ~99% of nodes are metric-invisible. See stage 3.")
 
 # %% [markdown]
 # ## Stage 3 - score real predictions

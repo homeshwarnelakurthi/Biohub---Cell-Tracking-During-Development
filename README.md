@@ -55,11 +55,12 @@ experiments/           Per-experiment results, appended over time
 1. **`score = adj_edge_jaccard + 0.1 × division_jaccard`**, where
    `adj = max(0, J × (1 − 0.1 × (N_pred − N_true)/N_true))`. The `max` clamps only the bottom, so
    *under-predicting nodes multiplies the score upward*. Node count is a tunable parameter, not a
-   byproduct.
-2. **False positives are only charged on edges touching an annotated ground-truth node.** Ground
-   truth is sparse, so a large share of spurious edges is invisible to the metric. Conservative
+   byproduct — though its size is still unresolved (MISTAKES M009).
+2. **False positives are only charged on edges touching an annotated ground-truth node.** Measured
+   annotation density is **0.16–1.34%**, so ~99% of predicted nodes are invisible to the edge
+   Jaccard while still being charged against the node count. Conservative
    linking is priced for a penalty that partly does not exist.
-3. **Training data contains two embryos** (`44b6` × 71 samples, `6bba` × 24), train/test are
+3. **Training data contains two embryos** (`44b6` × 71 samples, `6bba` × 128), train/test are
    embryo-disjoint, and the hidden test is a third embryo. The only honest validation is
    leave-one-embryo-out, 2 folds. Random-sample CV leaks embryo identity.
 

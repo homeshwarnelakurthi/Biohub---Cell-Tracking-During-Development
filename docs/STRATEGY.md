@@ -38,16 +38,24 @@ Two consequences:
 `score = adj_edge_jaccard + 0.1 * division_jaccard`. Full derivation in
 [METRIC_ANALYSIS.md](METRIC_ANALYSIS.md). Four levers, ordered by expected gain per GPU-hour:
 
-### Lever 1 — confidence-ordered edge IDs (cost: ~0 GPU hours)
+### Lever 1 — confidence-ordered edge IDs (cost: ~0 GPU hours) — sign known
+
 The metric truncates out-degree > 2 by *edge ID*, keeping whichever two edges were written first.
 Sorting edges by descending confidence before writing converts a random loss into a chosen one.
 Implemented in `src/biocell/submission.py`. Strictly non-negative in expectation.
 
-### Lever 2 — node budget (cost: ~0 GPU hours, CPU sweep only)
+### Lever 2 — node budget (cost: ~0 GPU hours, CPU sweep only) — SIZE UNRESOLVED
 The adjusted-Jaccard multiplier `(1 - 0.1 * (N_pred - N_true)/N_true)` is clamped only at the bottom,
-so under-predicting nodes multiplies the score *up*, while the FP-enriched low-confidence tail often
-raises the raw Jaccard as it is removed. There is an interior optimum. `src/biocell/node_budget.py`
-locates it. This is the highest expected-value item on the list and needs no retraining.
+so under-predicting nodes multiplies the score *up*.
+
+Measurement on 2026-08-03 changed the shape of this lever. `estimated_number_of_nodes` is 15k–64k per
+sample against 51–788 annotated nodes (0.16–1.34% density), so the coefficient is `0.1/N_true ≈
+3.8e-6` per node: trimming a thin confidence tail is worth ~0.0017, not the ~0.047 an earlier draft
+claimed from a simulation with invented inputs (MISTAKES M009).
+
+The real argument is different and possibly larger: ~99% of predicted nodes match no GT node, earn
+nothing in TP, and are still charged against the node count. But the operating point cannot be found
+without real predictions. **Treat as unresolved until stage 3 of the harness runs.**
 
 ### Lever 3 — divisions (cost: moderate)
 Only 0.1-weighted, but the gap we need is 0.034. Moving division Jaccard from ~0.25 to ~0.60 is worth
@@ -67,8 +75,9 @@ Only after 1–4 are exhausted and measured.
 
 ## The validation problem, and why it dominates everything
 
-Train has **two embryos**: `44b6` (71 samples), `6bba` (24 samples). Train/test are embryo-disjoint
-and the hidden test is a *different* embryo again.
+Train has **two embryos**: `44b6` (71 samples), `6bba` (128 samples), 199 total — counted from the
+mounted dataset, correcting an earlier truncated-API estimate of 95 (MISTAKES M010). Train/test are
+embryo-disjoint and the hidden test is a *different* embryo again.
 
 So the only honest protocol is **leave-one-embryo-out, 2 folds**. Two folds is a weak signal. The
 discipline that follows:
@@ -86,8 +95,9 @@ discipline that follows:
 `adj_edge_jaccard`, `division_jaccard` and `total_node_ratio` *separately*, per embryo. Until we can
 see which term is costing us, every change is guesswork. This is the gate for everything else.
 
-**Phase 2 — free wins (days 7–14).** Levers 1 and 2. No retraining. Expect this to clear the 0.913
-cluster.
+**Phase 2 — free wins (days 7–14).** Lever 1 (sign known). Then produce predicted geffs for the
+training samples — this is the critical path, since levers 2–4 all depend on it — and resolve
+lever 2 against them.
 
 **Phase 3 — divisions (days 14–35).** Lever 3, then lever 4. This is where the prize-zone gap is.
 
@@ -110,9 +120,15 @@ If A and B are the same configuration, deliberately weaken B until it isn't.
 
 ## Honest assessment of "position 1"
 
-First place is 0.947 against our 0.913, with 1935 teams and 57 days. Levers 1–2 are close to free and
-should move us out of the tied cluster; that part is low-risk. Closing the full 0.034 to #1 requires
-lever 3 to work, and that is a genuine research question, not an engineering certainty — the leaders
-are not standing still, and the top of the board will keep moving. A realistic target is the prize
-zone (top 7, +0.020) with a real shot at higher if the division work lands. I will keep the estimate
-updated against measured CV rather than restating the goal.
+First place is 0.947 against our 0.913, with 1935 teams and 57 days.
+
+Only lever 1 currently has a known sign, and it is small. Lever 2 was the thing that looked like a
+cheap large win, and measurement removed that claim rather than confirming it — its size is now
+genuinely unknown (MISTAKES M009). Levers 2, 3 and 4 all sit behind the same missing input: predicted
+geffs for the training samples. So the near-term risk is not that the ideas are wrong, it is that
+nothing is measurable until that input exists, and 57 days is not long.
+
+Closing the full 0.034 to #1 requires lever 3 to work, and that is a research question, not an
+engineering certainty — the leaders are not standing still either. A realistic target is the prize
+zone (top 7, +0.020), with higher contingent on the division work landing. This estimate gets revised
+against measured CV, not restated as a goal.
