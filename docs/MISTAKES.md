@@ -81,3 +81,35 @@ unless the scorer source is read.
 **Change.** `src/biocell/submission.py` sorts edges by descending confidence before assigning ids,
 and `cap_out_degree()` applies the cap ourselves by confidence. Read the scorer source, not the prose,
 before trusting any assumption about how predictions are counted.
+
+---
+
+## M007 — Unpinned `pip install` broke numpy's ABI inside the Kaggle image
+**Date:** 2026-08-03 (first run of `biohub-cv-harness`, killed the notebook)
+**What happened.** `pip install tracksdata geff polars` pulled numpy up to 2.4.6. Every
+pre-compiled extension in the Kaggle image was built against the older numpy, so the next
+`import tracksdata` died with
+`AttributeError: module 'numpy._core._multiarray_umath' has no attribute '_blas_supports_fpe'`.
+The whole run failed at cell 3.
+**Why.** Treated the Kaggle image as a normal environment where installs are additive. It is a
+pinned binary image, and *any* transitive numpy bump invalidates it. Exactly the same failure class
+as M005 locally — noticed there, then walked into it again on a different machine.
+**Change.** The harness now reads `numpy.__version__` first, writes it to a pip constraints file,
+installs against `-c` that file, and **asserts numpy did not move** afterwards. The official repo is
+installed with `--no-deps`. Any Kaggle notebook that pip-installs anything gets the same treatment.
+The failure mode of a silent numpy bump is a dead kernel 10 minutes in, so assert early and loudly.
+
+---
+
+## M008 — Hardcoded the competition data path and did not check it
+**Date:** 2026-08-03 (same run)
+**What happened.** The notebook assumed
+`/kaggle/input/biohub-cell-tracking-during-development/train` and printed `train geffs: 0`. Even if
+the imports had worked, the harness would have scored an empty set and reported summary statistics
+over nothing.
+**Why.** The path was written from the competition slug rather than from the actual mount, and the
+zero count was printed but not asserted on — so it would have scrolled past as informational output.
+**Change.** `find_train_dir()` discovers the mount by globbing `/kaggle/input` for a directory that
+actually contains `*.geff`, prints what it found and the per-embryo counts, and asserts non-empty.
+General rule: every input path is discovered and asserted, never assumed. A count of zero is an
+error, not a log line.

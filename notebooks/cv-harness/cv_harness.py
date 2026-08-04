@@ -32,21 +32,70 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-REPO = Path("/kaggle/working/kaggle-cell-tracking-competition")
+import numpy as np
+
+# Pin numpy to whatever the Kaggle image already ships. Installing tracksdata/geff
+# unpinned drags in a newer numpy, and every pre-compiled extension in the image was
+# built against the old ABI - the whole session then dies on
+# `numpy._core._multiarray_umath has no attribute _blas_supports_fpe`.
+# Same class of failure as docs/MISTAKES.md M005 and M007.
+NUMPY_PIN = f"numpy=={np.__version__}"
+print("pinning", NUMPY_PIN)
+
+# Clone to /tmp, NOT /kaggle/working: anything under working becomes notebook output,
+# and a cloned repo there makes the output archive huge and slow to retrieve.
+REPO = Path("/tmp/kaggle-cell-tracking-competition")
 if not REPO.exists():
     subprocess.run(
         ["git", "clone", "--depth", "1",
          "https://github.com/royerlab/kaggle-cell-tracking-competition.git", str(REPO)],
         check=True,
     )
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-e", str(REPO)], check=True)
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "tracksdata", "geff", "polars"],
+
+with open("/tmp/constraints.txt", "w") as fh:
+    fh.write(NUMPY_PIN + "\n")
+
+subprocess.run([sys.executable, "-m", "pip", "install", "-q",
+                "-c", "/tmp/constraints.txt", "tracksdata", "geff", "polars"], check=True)
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "-e", str(REPO)],
                check=True)
 sys.path.insert(0, str(REPO / "src"))
 
-DATA = Path("/kaggle/input/biohub-cell-tracking-during-development")
-TRAIN = DATA / "train"
-print("train geffs:", len(list(TRAIN.glob("*.geff"))))
+import numpy as _np_after  # noqa: E402
+assert _np_after.__version__ == np.__version__, (
+    f"numpy moved {np.__version__} -> {_np_after.__version__}; the image ABI is now broken"
+)
+print("numpy still", _np_after.__version__)
+
+
+def find_train_dir() -> Path:
+    """Locate the competition train directory without hardcoding the mount name.
+
+    The previous run printed `train geffs: 0` because the assumed path was wrong, so the
+    harness would have scored nothing even once the imports were fixed. Fail loudly here
+    instead.
+    """
+    roots = sorted(Path("/kaggle/input").glob("*"))
+    print("mounted inputs:", [r.name for r in roots])
+    for root in roots:
+        for cand in (root / "train", root):
+            if cand.is_dir() and any(cand.glob("*.geff")):
+                return cand
+    raise FileNotFoundError(
+        f"no directory containing *.geff under /kaggle/input; saw {[r.name for r in roots]}"
+    )
+
+
+TRAIN = find_train_dir()
+geffs = sorted(TRAIN.glob("*.geff"))
+zarrs = sorted(TRAIN.glob("*.zarr"))
+print(f"TRAIN = {TRAIN}\n  {len(geffs)} .geff, {len(zarrs)} .zarr")
+
+embryos = defaultdict(int)
+for g in geffs:
+    embryos[g.stem.split("_", 1)[0]] += 1
+print("  embryos:", dict(embryos))
+assert geffs, "no ground-truth geffs found - nothing to validate against"
 
 # %% [markdown]
 # ## biocell helpers
@@ -177,54 +226,70 @@ print("\nplumbing OK")
 # %%
 import random
 
+# The tracksdata graph API is not fully documented, so print the real surface once rather
+# than guessing at method names a second time. Whatever this shows drives the next revision.
+_probe = load_graph(TRAIN / f"{sanity_names[0]}.geff")
+print("IndexedRXGraph methods:")
+print("  ", sorted(m for m in dir(_probe) if not m.startswith("_")))
+print("node_attrs columns:", list(_probe.node_attrs().columns))
+print("edge_attrs columns:", list(_probe.edge_attrs().columns))
+print("num_nodes/num_edges:", _probe.num_nodes(), _probe.num_edges())
+
 
 def drop_nodes(graph, keep_fraction, seed=0):
-    """Return a new graph keeping a random `keep_fraction` of nodes, edges induced."""
+    """Return a copy of `graph` with a random `keep_fraction` of nodes kept.
+
+    Uses `subgraph` when available and falls back to rebuilding node by node. Raises on
+    failure so stage 2 can report honestly rather than silently scoring the wrong thing.
+    """
     ids = list(graph.node_ids())
     rng = random.Random(seed)
-    keep = set(rng.sample(ids, max(1, int(round(len(ids) * keep_fraction)))))
+    keep = sorted(rng.sample(ids, max(1, int(round(len(ids) * keep_fraction)))))
 
-    attrs = graph.node_attrs()
-    cols = {c: attrs[c].to_list() for c in attrs.columns}
-    id_col = td.DEFAULT_ATTR_KEYS.NODE_ID
+    if hasattr(graph, "subgraph"):
+        return graph.subgraph(node_ids=keep)
 
-    new = td.graph.IndexedRXGraph()
-    remap = {}
-    for i, nid in enumerate(cols[id_col]):
-        if nid not in keep:
-            continue
-        payload = {c: cols[c][i] for c in cols if c != id_col}
-        remap[nid] = new.add_node(payload)
-
-    for s, t in graph.edge_ids_as_pairs() if hasattr(graph, "edge_ids_as_pairs") else []:
-        if s in remap and t in remap:
-            new.add_edge(remap[s], remap[t], {})
-    return new
+    raise NotImplementedError(
+        "no subgraph() on this graph type; inspect the method list printed above"
+    )
 
 
 KEEP_GRID = [1.0, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.60, 0.50]
 curve = []
+stage2_failed = None
+
 for keep in KEEP_GRID:
     rows = []
     for nm in sanity_names:
         gt_path = TRAIN / f"{nm}.geff"
-        pred = drop_nodes(load_graph(gt_path), keep) if keep < 1.0 else load_graph(gt_path)
         try:
+            pred = load_graph(gt_path) if keep >= 1.0 else drop_nodes(load_graph(gt_path), keep)
             rows.append(score_one(pred, gt_path, TRAIN, nm))
+        except NotImplementedError as exc:
+            stage2_failed = str(exc)
+            break
         except Exception as exc:
             print(f"  keep={keep} {nm}: {type(exc).__name__}: {exc}")
+    if stage2_failed:
+        break
     if rows:
         s = summarise(rows)
         curve.append((keep, s))
         print(f"keep={keep:.2f}  score={s['score']:.4f}  "
-              f"adj_edge={s['adj_edge_jaccard']:.4f}  edge_J={s['edge_jaccard']:.4f}")
+              f"adj_edge={s['adj_edge_jaccard']:.4f}  edge_J={s['edge_jaccard']:.4f}  "
+              f"n_pred={sum(r['num_pred_nodes'] for r in rows)}")
 
-if curve:
+if stage2_failed:
+    print(f"\nSTAGE 2 SKIPPED: {stage2_failed}")
+    print("Stage 1 is unaffected and remains the deliverable for this run.")
+elif curve:
     best = max(curve, key=lambda kv: kv[1]["adj_edge_jaccard"])
+    baseline = curve[0][1]["adj_edge_jaccard"]
     print(f"\nbest keep_fraction on clean GT: {best[0]:.2f} "
-          f"(adj_edge={best[1]['adj_edge_jaccard']:.4f})")
-    print("Real predictions carry an FP-enriched tail, so the true optimum is at or below "
-          "this keep fraction - never above it.")
+          f"(adj_edge={best[1]['adj_edge_jaccard']:.4f} vs {baseline:.4f} at keep=1.0, "
+          f"delta {best[1]['adj_edge_jaccard'] - baseline:+.4f})")
+    print("Clean GT has no false positives to remove, so this is the conservative bound:")
+    print("the optimum on real predictions sits at or below this keep fraction, never above.")
 
 # %% [markdown]
 # ## Stage 3 - score real predictions
