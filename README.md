@@ -38,11 +38,15 @@ docs/
   MISTAKES.md          Running log of errors and what changed as a result
   source/Biohub.md     Archived scrape of the competition page (2026-07-03) — stale, see M002
 src/biocell/
+  cv.py                Leave-one-embryo-out CV; ships a change only if both folds improve
   node_budget.py       Node-count/Jaccard trade-off optimiser (metric property 1)
   submission.py        Submission writer with confidence-ordered edge ids (metric property 3)
 tools/
   kaggle_status.py     Live leaderboard, standing and submission history
-notebooks/             Kaggle notebooks pulled from our account
+  sync_notebook.py     Push a `# %%` script to Kaggle as a notebook
+notebooks/
+  cv-harness/          E002 validation harness (source of truth for the Kaggle notebook)
+  <others>             Notebooks pulled from our Kaggle account
 experiments/           Per-experiment results, appended over time
 ```
 
