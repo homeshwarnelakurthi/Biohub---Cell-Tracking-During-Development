@@ -54,11 +54,12 @@ CV-selected change did not break, never to choose between candidates.
 only **two embryos**, train/test are embryo-disjoint, and the hidden test is a third embryo. Random
 splits leak embryo identity and will overstate every result.
 
+**Change.** Leave-one-embryo-out only. Ship a change only if it wins on both folds. One-fold wins are
+noise and get discarded rather than averaged.
+
 > Counts corrected 2026-08-03: this entry originally said 95 samples (`44b6` × 71, `6bba` × 24). The
 > real split is 199 (`44b6` × 71, `6bba` × 128) — see M010. The argument is unaffected; only the
 > numbers were wrong.
-**Change.** Leave-one-embryo-out only. Ship a change only if it wins on both folds. One-fold wins are
-noise and get discarded rather than averaged.
 
 ---
 
