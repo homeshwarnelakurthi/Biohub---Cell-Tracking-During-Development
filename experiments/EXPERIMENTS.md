@@ -29,6 +29,26 @@ Ordered by expected gain per GPU-hour. Rationale for the ordering is in
 training set. Producing them (E003) is the bottleneck, not any individual lever. The harness is ready
 and idle until it has predictions to score.
 
+## Pre-registered predictions
+
+Written before the result is known, so the finding cannot be rationalised afterwards.
+
+**E004 (recorded 2026-08-04, before submitting).** Predicted public LB = **0.913, unchanged**.
+
+Reason: the run's own `run_stats.csv` reports `dropped_multi_child_edges = 0` and
+`dropped_multi_parent_edges = 0` on every test sample, and our added cap logged zero drops. The
+baseline's `filter_output_graph` already enforces out-degree <= 2 upstream, so the metric's
+`_out_rank <= 2` truncation — the rule lever 1 targets — can never fire on this output.
+
+The other id-order rule, merge-collapse, keeps the lowest edge id among predicted edges mapping onto
+the same matched GT edge pair. All such duplicates map to the *same* GT edge, so whichever survives
+is a TP either way; ordering cannot change TP/FP there either.
+
+If this comes back at 0.913, lever 1 is a confirmed no-op for this pipeline and METRIC_ANALYSIS
+property 3 needs its precondition stated: the rule is real, but the baseline never violates it.
+If it comes back different, my reading of the scorer is wrong somewhere and that is worth more than
+the points.
+
 ## What to record per experiment
 
 - The exact config diff, not a description of it.
