@@ -1,0 +1,9 @@
+# Analysis + tooling. Training/inference runs on Kaggle, which pins its own stack.
+kaggle>=1.6
+zarr>=3.0
+numcodecs
+numpy>=2.0
+scipy
+scikit-image
+networkx
+polars

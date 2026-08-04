@@ -1,0 +1,30 @@
+# Environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Competition data — 87.6 GB, never committed
+data/
+*.zarr/
+*.geff/
+*.zip
+
+# Model weights and large artifacts
+weights/
+*.pth
+*.pt
+*.onnx
+
+# Generated submissions (record the config in experiments/, not the CSV)
+submission.csv
+submissions/
+
+# Credentials — never commit
+kaggle.json
+.env
+
+# OS
+Thumbs.db
+.DS_Store
