@@ -147,7 +147,28 @@ def build() -> Path:
     out_nb.write_text(json.dumps(nb, indent=1), encoding="utf-8")
 
     username = json.loads((Path.home() / ".kaggle" / "kaggle.json").read_text())["username"]
-    (OUT_DIR / "kernel-metadata.json").write_text(json.dumps({
+
+    # Both of these are inherited from the baseline notebook's server-side metadata and
+    # both matter:
+    #
+    # machine_shape - `enable_gpu` alone is deprecated and leaves the accelerator to
+    #   Kaggle's default, which handed the first run a Tesla P100 (sm_60). The image's
+    #   PyTorch only ships kernels for sm_70+, so every forward pass died with
+    #   "no kernel image is available for execution on the device". The T4 is sm_75.
+    #
+    # docker_image - pinned to the exact image the baseline scored with, so that a change
+    #   in Kaggle's rolling image cannot silently move the score underneath an experiment.
+    #   Without this, a CV-vs-LB divergence would be indistinguishable from environment
+    #   drift.
+    baseline_meta = json.loads(
+        (BASELINE.parent / "kernel-metadata.json").read_text(encoding="utf-8")
+    )
+    machine_shape = baseline_meta.get("machine_shape") or "NvidiaTeslaT4"
+    docker_image = baseline_meta.get("docker_image", "")
+    print(f"  machine_shape: {machine_shape}")
+    print(f"  docker_image:  {docker_image[:60]}{'...' if len(docker_image) > 60 else ''}")
+
+    meta = {
         "id": f"{username}/{SLUG}",
         "title": TITLE,
         "code_file": f"{SLUG}.ipynb",
@@ -155,12 +176,17 @@ def build() -> Path:
         "kernel_type": "notebook",
         "is_private": "true",
         "enable_gpu": "true",
+        "machine_shape": machine_shape,
         # Submission notebooks are scored with no network access. Must stay false.
         "enable_internet": "false",
         "competition_sources": [COMPETITION],
         "dataset_sources": DATASET_SOURCES,
         "kernel_sources": [],
-    }, indent=1), encoding="utf-8")
+    }
+    if docker_image:
+        meta["docker_image"] = docker_image
+
+    (OUT_DIR / "kernel-metadata.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
 
     print(f"wrote {out_nb}")
     return OUT_DIR

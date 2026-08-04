@@ -174,3 +174,27 @@ unless `slugify(TITLE) == SLUG`. Titles are kept short and slug-shaped; descript
 commit message and the experiment log, not the notebook title. General rule: when a push warns, read
 the warning even if the exit code is zero.
 
+---
+
+## M012 — `enable_gpu` is deprecated; without `machine_shape` Kaggle picked an unusable GPU
+**Date:** 2026-08-04
+**What happened.** The E004 submission notebook was pushed with `"enable_gpu": "true"` and nothing
+else. Kaggle assigned a **Tesla P100 (sm_60)**, and the image's PyTorch ships kernels only for
+sm_70–sm_120, so the first forward pass died with
+`CUDA error: no kernel image is available for execution on the device`. Five minutes of GPU quota
+burnt, and the traceback pointed at `torch.relu_`, which reads like a model bug rather than a
+hardware-selection bug.
+**Why.** `enable_gpu` is marked *DEPRECATED: use `machine_shape` instead* in the API type
+definitions, and with `machine_shape` unset the accelerator falls back to Kaggle's default. The
+existing baseline notebook had `machine_shape: "NvidiaTeslaT4"` set — inherited from having been
+configured in the web UI — so it never hit this. Building fresh metadata from scratch silently
+dropped a setting the baseline depended on.
+**Change.** `make_submission_notebook.py` now reads `machine_shape` **and** `docker_image` from the
+baseline's own `kernel-metadata.json` and carries both forward. Pinning the image matters
+independently: Kaggle's rolling image could otherwise move the score under an experiment, making
+environment drift indistinguishable from a real CV-vs-LB divergence.
+
+General rule: when forking a working configuration, diff the *whole* metadata against it rather than
+re-deriving the fields that seem relevant. The setting that breaks you is the one you did not know
+was load-bearing.
+
