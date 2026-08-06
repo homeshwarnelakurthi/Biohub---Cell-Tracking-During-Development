@@ -106,19 +106,121 @@ REPLACEMENT_1 = """        # --- BIOCELL PATCH 1: confidence-ordered edge ids + 
 ANCHOR_2 = """COMPETITION = "biohub-cell-tracking-during-development"
 COMP_DIR_CANDIDATES = ["""
 
-REPLACEMENT_2 = """# --- BIOCELL PATCH 2: disable add_safe_divisions_postlink (E007, shipped) ---
-os.environ["BIOHUB_OUTPUT_SAFE_DIVISIONS"] = "0"
-print("BIOCELL PATCH 2: BIOHUB_OUTPUT_SAFE_DIVISIONS -> 0 (heuristic disabled)")
-# --- END BIOCELL PATCH 2 ---
-
-COMPETITION = "biohub-cell-tracking-during-development"
+ANCHOR_2_TAIL = """COMPETITION = "biohub-cell-tracking-during-development"
 COMP_DIR_CANDIDATES = ["""
 
 
-def apply_patches(nb: dict, disable_safe_divisions: bool) -> dict:
+def _prelude(env: dict[str, str], ilp_divisions: bool) -> str:
+    """Build the block that runs before the CONFIG cell reads any override.
+
+    Both the safe-divisions toggle and arbitrary --env overrides target the same anchor,
+    so they compose into one replacement instead of competing for it.
+    """
+    lines = ["# --- BIOCELL PRELUDE: config overrides via the baseline's own env vars ---"]
+    for key, value in env.items():
+        lines.append(f'os.environ["{key}"] = "{value}"')
+        lines.append(f'print("BIOCELL override: {key} -> {value}")')
+    if ilp_divisions:
+        lines.append(
+            'ILP_DIVISION_MIN_PROB = float(os.environ.get("BIOHUB_ILP_DIVISION_MIN_PROB", "0.0"))'
+        )
+    lines.append("# --- END BIOCELL PRELUDE ---")
+    lines.append("")
+    lines.append(ANCHOR_2_TAIL)
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Patch 3 (--ilp-divisions) - restore ILP-proposed divisions after motion relink.
+# Mirrors Patch D in make_validation_notebook.py; see that file and
+# docs/METRIC_ANALYSIS.md property 5 for the derivation.
+#
+# Guard-safe by construction: only added when the target has no parent (max in-degree
+# stays 1) and the source has exactly one child (max out-degree becomes 2, never 3).
+# Composes with add_safe_divisions_postlink when that is left enabled - safe divisions
+# run inside filter_output_graph and already take the source to out-degree 2, so this
+# only fills in forks the heuristic did not claim.
+# ---------------------------------------------------------------------------
+
+ANCHOR_3 = """        raw_node_count = len(nodes_by_id)
+        nodes_by_id, edges, filter_stats = filter_output_graph(nodes_by_id, raw_edges, dataset=dataset, deepcenter_bundle=DEEPCENTER_VETO_DETECTOR)
+        if not nodes_by_id:
+            raise AssertionError(f"{dataset}: post-processing removed every node")"""
+
+REPLACEMENT_3 = """        raw_node_count = len(nodes_by_id)
+        nodes_by_id, edges, filter_stats = filter_output_graph(nodes_by_id, raw_edges, dataset=dataset, deepcenter_bundle=DEEPCENTER_VETO_DETECTOR)
+        if not nodes_by_id:
+            raise AssertionError(f"{dataset}: post-processing removed every node")
+
+        # --- BIOCELL PATCH 3: restore ILP-proposed divisions after motion relink ---
+        _ilp_children: dict[int, list[tuple[int, float]]] = {}
+        for _re in raw_edges:
+            _p = _re.get("edge_prob")
+            _ilp_children.setdefault(int(_re["source_id"]), []).append(
+                (int(_re["target_id"]), 0.0 if _p is None else float(_p))
+            )
+
+        _out_c: dict[int, int] = {}
+        _in_c: dict[int, int] = {}
+        _existing = set()
+        for _e in edges:
+            _s = int(_e["source_id"]); _t = int(_e["target_id"])
+            _out_c[_s] = _out_c.get(_s, 0) + 1
+            _in_c[_t] = _in_c.get(_t, 0) + 1
+            _existing.add((_s, _t))
+
+        _added = 0
+        _skipped_parent = 0
+        for _src, _kids in _ilp_children.items():
+            if len(_kids) < 2 or _out_c.get(_src, 0) != 1:
+                continue
+            _src_node = nodes_by_id.get(_src)
+            if _src_node is None:
+                continue
+            for _tgt, _prob in sorted(_kids, key=lambda kv: kv[1], reverse=True):
+                if (_src, _tgt) in _existing:
+                    continue
+                _tgt_node = nodes_by_id.get(_tgt)
+                if _tgt_node is None:
+                    continue
+                if int(_tgt_node["t"]) != int(_src_node["t"]) + 1:
+                    continue
+                if _in_c.get(_tgt, 0) != 0:
+                    _skipped_parent += 1
+                    continue
+                if _prob < ILP_DIVISION_MIN_PROB:
+                    continue
+                edges.append({
+                    "source_id": _src,
+                    "target_id": _tgt,
+                    "edge_prob": _prob,
+                    "distance_um": edge_distance_um(_src_node, _tgt_node),
+                    "ilp_division": 1,
+                })
+                _out_c[_src] = _out_c.get(_src, 0) + 1
+                _in_c[_tgt] = 1
+                _existing.add((_src, _tgt))
+                _added += 1
+                break
+        filter_stats["ilp_divisions_added"] = _added
+        filter_stats["ilp_divisions_skipped_has_parent"] = _skipped_parent
+        print(f"  {dataset}: ILP divisions restored={_added} "
+              f"(skipped, target already had a parent: {_skipped_parent})")
+        # --- END BIOCELL PATCH 3 ---"""
+
+
+def apply_patches(nb: dict, disable_safe_divisions: bool,
+                  env: dict[str, str] | None = None, ilp_divisions: bool = False) -> dict:
     patches = [("confidence-ordered edges + out-degree cap", ANCHOR_1, REPLACEMENT_1)]
+
+    overrides = dict(env or {})
     if disable_safe_divisions:
-        patches.append(("disable add_safe_divisions_postlink", ANCHOR_2, REPLACEMENT_2))
+        overrides["BIOHUB_OUTPUT_SAFE_DIVISIONS"] = "0"
+    if overrides or ilp_divisions:
+        patches.append(("config prelude (env overrides)", ANCHOR_2,
+                        _prelude(overrides, ilp_divisions)))
+    if ilp_divisions:
+        patches.append(("restore ILP-proposed divisions", ANCHOR_3, REPLACEMENT_3))
 
     applied = {name: 0 for name, _, _ in patches}
 
@@ -149,7 +251,8 @@ def apply_patches(nb: dict, disable_safe_divisions: bool) -> dict:
     return nb
 
 
-def build(slug: str, title: str, disable_safe_divisions: bool) -> Path:
+def build(slug: str, title: str, disable_safe_divisions: bool,
+          env: dict[str, str] | None = None, ilp_divisions: bool = False) -> Path:
     if slugify(title) != slug:
         raise SystemExit(
             f"title {title!r} slugifies to {slugify(title)!r}, not {slug!r}. "
@@ -160,7 +263,7 @@ def build(slug: str, title: str, disable_safe_divisions: bool) -> Path:
         raise SystemExit(f"baseline not found: {BASELINE}")
     nb = json.loads(BASELINE.read_text(encoding="utf-8"))
     print(f"baseline: {BASELINE.name} ({len(nb['cells'])} cells)")
-    nb = apply_patches(nb, disable_safe_divisions)
+    nb = apply_patches(nb, disable_safe_divisions, env, ilp_divisions)
 
     out_dir = REPO / "notebooks" / slug.replace("biohub-", "", 1)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -220,10 +323,23 @@ def main() -> int:
     p.add_argument("--slug", default=DEFAULT_SLUG)
     p.add_argument("--title", default=DEFAULT_TITLE)
     p.add_argument("--disable-safe-divisions", action="store_true",
-                    help="apply patch 2: disable add_safe_divisions_postlink (E007, shipped)")
+                    help="disable add_safe_divisions_postlink (E007 - REVERTED, see MISTAKES M015)")
+    p.add_argument("--ilp-divisions", action="store_true",
+                    help="restore ILP-proposed divisions after motion relink")
+    p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
+                    help="override a BIOHUB_* config var; repeatable")
     args = p.parse_args()
 
-    out_dir = build(args.slug, args.title, args.disable_safe_divisions)
+    env: dict[str, str] = {}
+    for item in args.env:
+        if "=" not in item:
+            raise SystemExit(f"--env expects KEY=VALUE, got {item!r}")
+        k, v = item.split("=", 1)
+        if not k.startswith("BIOHUB_"):
+            raise SystemExit(f"--env key {k!r} does not start with BIOHUB_ - likely a typo")
+        env[k] = v
+
+    out_dir = build(args.slug, args.title, args.disable_safe_divisions, env, args.ilp_divisions)
 
     if args.push:
         from kaggle.api.kaggle_api_extended import KaggleApi
