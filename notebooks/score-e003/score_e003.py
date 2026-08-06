@@ -48,12 +48,12 @@ assert _np_after.__version__ == np.__version__, (
 print("numpy still", _np_after.__version__)
 
 # %%
-def find_geff_dirs(max_depth: int = 6) -> list[Path]:
-    """Walk /kaggle/input for every directory that directly contains *.geff files."""
+def find_geff_dirs(max_depth: int = 6, roots: list[Path] | None = None) -> list[Path]:
+    """Walk the given roots for every directory that directly contains *.geff files."""
     root = Path("/kaggle/input")
     print("mounted inputs:", [p.name for p in sorted(root.glob("*"))])
     found: list[Path] = []
-    stack = [(root, 0)]
+    stack = [(r, 0) for r in (roots or [root])]
     while stack:
         d, depth = stack.pop()
         if depth > max_depth:
@@ -69,12 +69,27 @@ def find_geff_dirs(max_depth: int = 6) -> list[Path]:
     return found
 
 
-# Two mounted directories are expected to contain *.geff: the real training set (paired
-# with matching *.zarr volumes) and this run's predictions (Patch B wrote geff only, no
-# zarr, into /kaggle/working/biocell_pred_geffs on the E003 kernel). Discriminate on that,
+# Predictions may arrive either as a kernel_source mount (a successful run's output) or as
+# a dataset mount. A dataset uploaded with dir_mode='zip' may land as a .zip that Kaggle
+# does not always expand, so extract it to /tmp first if no loose geffs are visible.
+import zipfile
+
+if not any(p.name.endswith(".geff") for p in Path("/kaggle/input").rglob("*.geff")):
+    for zp in Path("/kaggle/input").rglob("*.zip"):
+        target = Path("/tmp/unzipped") / zp.stem
+        target.mkdir(parents=True, exist_ok=True)
+        print(f"extracting {zp} -> {target}")
+        with zipfile.ZipFile(zp) as zf:
+            zf.extractall(target)
+
+# Two directories are expected to contain *.geff: the real training set (paired with
+# matching *.zarr volumes) and the predictions (geff only, no zarr). Discriminate on that,
 # not on a guessed mount name - Kaggle's exact path for a kernel_source isn't documented
 # and guessing it wrong already cost two runs on the CV harness (MISTAKES M007/M008).
-candidates = find_geff_dirs()
+search_roots = [Path("/kaggle/input")]
+if Path("/tmp/unzipped").exists():
+    search_roots.append(Path("/tmp/unzipped"))
+candidates = find_geff_dirs(roots=search_roots)
 print("directories containing *.geff:", [str(p) for p in candidates])
 if len(candidates) < 2:
     raise FileNotFoundError(
