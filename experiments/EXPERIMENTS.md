@@ -19,7 +19,7 @@ Ordered by expected gain per GPU-hour. Rationale for the ordering is in
 
 | ID | Change | Lever | Cost | Status |
 | --- | --- | --- | --- | --- |
-| E003 | **Produce predicted geffs for the training samples** by running the forked pipeline over `train/` | critical path | GPU | queued |
+| E003 | **Produce predicted geffs for the training samples** — stratified subset (6/embryo, 12 total), first pass via `biohub-validation-e003` | critical path | GPU | running |
 | E005 | Node-budget sweep on real predictions — resolve the M009 question | 2 | CPU | blocked on E003 |
 | E006 | Division threshold sweep (`SAFE_DIV_FRAME_FRAC_CAP`, `SAFE_DIV_GLOBAL_FRAC_CAP`, geometry gates) | 3 | GPU | blocked on E003 |
 | E007 | Raise link aggressiveness, paid for from the node budget | 4 | GPU | blocked on E005 |
