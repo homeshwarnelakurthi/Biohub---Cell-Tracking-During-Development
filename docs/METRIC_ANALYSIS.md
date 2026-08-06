@@ -303,8 +303,42 @@ objective function declining to ever pay for a division.
 
 Being explicit about the risk: lowering it far enough will start producing divisions, but nothing
 here guarantees they are the *right* ones — too low and every confident edge pair forks, trading a
-0-TP/0-FP state for a 0-TP/many-FP one, which is strictly worse. E010 (0.4) and E011 (0.6) test this
-on the same 12 samples, and `biocell.cv.verdict()` decides on both folds as usual. That makes it the clearest priority target this project has had so far.
+0-TP/0-FP state for a 0-TP/many-FP one, which is strictly worse.
+
+### E011 result: the ILP weight is irrelevant, because the ILP's answer is thrown away
+
+`division_weight = 0.6` (bar at `edge_prob > 0.50`) produced **exactly zero forks** — same as the
+baseline. The override did reach the solver (node/edge totals shifted by ~100 vs E007, and predict
+time differed, so nothing was cached), it simply had no effect on divisions.
+
+The reason is downstream of the ILP entirely. `filter_output_graph` calls
+`motion_relink_edges`, which rebuilds the frame-to-frame links with
+**`scipy.optimize.linear_sum_assignment`** — the Hungarian algorithm, a strict **one-to-one**
+bipartite matching between frame `t` and `t+1`, run in two passes (tight then relaxed) over only the
+still-unmatched nodes.
+
+A 1:1 assignment cannot express a division: every source is matched to at most one target. And it
+does not merely refine the ILP output, it *replaces* it — on `44b6_668e0cc7`, 28,548 of 31,676 raw
+edges were replaced; `motion_relink_fallback_raw = 0` everywhere, so the ILP result is never even
+fallen back on.
+
+So the real pipeline is:
+
+```
+UNet + transformer  ->  candidate edges with probabilities
+ILP solve           ->  globally optimal links (divisions possible here)
+motion_relink       ->  DISCARDS that and redoes linking as strict 1:1 Hungarian  <-- divisions die
+safe_divisions      ->  bolts divisions back on by geometric proximity (0% precision, removed in E007)
+```
+
+Every division the competition metric ever saw came from the last step, because the third step
+structurally forbids them. Tuning `ILP_DIVISION_WEIGHT` alone can never matter while
+`OUTPUT_MOTION_RELINK = 1`.
+
+E012 tests the actual fix: `OUTPUT_MOTION_RELINK=0` so the ILP's solution survives to the output,
+with `division_weight = 0.6`. The open question is cost — motion relink is presumably enabled because
+it improves edge quality, so turning it off may trade edge Jaccard for divisions. That trade is
+exactly what `biocell.cv.verdict()` on both folds is there to adjudicate. That makes it the clearest priority target this project has had so far.
 
 ---
 
