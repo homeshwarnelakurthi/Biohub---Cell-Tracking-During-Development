@@ -118,6 +118,26 @@ investigating before trusting CV again. If it lands in the predicted range, that
 CV can be trusted here. If it lands much higher than +0.003, something about the real test
 distribution differs from CV in a way worth understanding.
 
+**v3 submission (recorded 2026-08-06, before submitting).** Predicted public LB: **sign genuinely
+uncertain**, most likely a small move in either direction, roughly 0.905-0.918.
+
+I am not claiming a direction, and the reason is specific rather than hedging. Division Jaccard is
+`TP / (TP + FP + FN)`, so the 155 added divisions are *not* free: every one that is wrong and lands
+on annotated ground truth enlarges the denominator and pushes the term **down**. v1 already earns
+roughly 0.09 there from its 318 safe divisions (inferred from the v2 regression), so this can lose
+ground as easily as gain it.
+
+Two things damp the risk: most predicted divisions sit in unannotated regions where the metric cannot
+see them at all (METRIC_ANALYSIS property 2), and everything that earned 0.913 is untouched.
+
+Outcomes and what each would mean:
+- **> 0.913** - ILP divisions add real true positives on unseen data; the division lever is live and
+  worth pushing further (tighten with `BIOHUB_ILP_DIVISION_MIN_PROB`, then re-test).
+- **~0.913** - the added divisions are mostly metric-invisible; neutral, and the lever needs
+  targeting rather than volume.
+- **< 0.913** - they are net false positives on real data. That would mean the ILP division signal
+  does not transfer either, and the whole division line of attack is weaker than E012/E013 suggested.
+
 ## What to record per experiment
 
 - The exact config diff, not a description of it.
