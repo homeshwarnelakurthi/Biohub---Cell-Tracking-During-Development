@@ -227,7 +227,43 @@ investigating now, not yet strong enough to claim the true division Jaccard is e
 full test distribution. The next step is to inspect specific FP/FN cases, not just the aggregate.
 
 If the leaders are anywhere above ~0.35 division Jaccard, this term alone accounts for the entire gap
-to #1. That makes it the clearest priority target this project has had so far.
+to #1.
+
+### Root cause (E005, 2026-08-06): the entire division-prediction capability is one heuristic
+
+`run_stats.csv` from E003 has a `division_like_sources` column (out-degree ≥ 2 nodes in the final
+output) and a `safe_divisions_added` column (edges added by the post-link repair function
+`add_safe_divisions_postlink`). They are **exactly equal on all 12 samples**:
+
+```
+44b6_7a302da0   division_like_sources=159   safe_divisions_added=159
+44b6_eb2880fc   division_like_sources=125   safe_divisions_added=125
+... (10 more, all exact matches, including 0==0 on the one sample with no divisions)
+```
+
+**The base linker/ILP produces zero natural forks.** Every predicted division in every sample comes
+from one late-stage repair step, not from tracking or detection.
+
+Reading `add_safe_divisions_postlink` explains why it has 0% precision where measurable. For every
+node with exactly one existing child, it searches the next frame for an *unmatched, orphan* detection
+— one the primary linker failed to attach to anything — within `SAFE_DIV_MAX_UM` (4.7 µm) of the
+source and `SAFE_DIV_SISTER_MAX_UM` (7.2 µm) of the existing child, and attaches it as a second child.
+**No confidence score, no morphological signal — purely geometric proximity to a leftover detection
+the main linker already gave up on.** In densely packed embryo tissue, an unrelated neighboring cell
+sitting within a few µm of an existing track is unremarkable; the heuristic cannot tell that apart
+from a genuine division.
+
+The scale confirms it: on the largest sample (`44b6_7a302da0`, 40,718 nodes), the heuristic added 159
+divisions against a `SAFE_DIV_GLOBAL_FRAC_CAP`-implied ceiling of ≈163 — **it is nearly saturating the
+cap**, meaning it wants to fire even more often and is being stopped by an arbitrary global limit, not
+by any evidence of a real division.
+
+There is a compounding side effect: a component that "has a division" is exempted from the
+`OUTPUT_MIN_TRACK_LEN` short-track filter (`OUTPUT_KEEP_DIVISION_COMPONENTS`). So this heuristic isn't
+just adding wrong edges — it is actively rescuing noisy orphan detections from being pruned, by
+mislabelling them as division daughters.
+
+See MISTAKES.md for the fix tested against this diagnosis (E007) and its CV result. That makes it the clearest priority target this project has had so far.
 
 ---
 

@@ -40,10 +40,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 BASELINE = REPO / "notebooks" / "biohub" / "biohub.ipynb"
-OUT_DIR = REPO / "notebooks" / "validation-e003"
 
-SLUG = "biohub-validation-e003"
-TITLE = "Biohub Validation E003"
+DEFAULT_SLUG = "biohub-validation-e003"
+DEFAULT_TITLE = "Biohub Validation E003"
 COMPETITION = "biohub-cell-tracking-during-development"
 
 DATASET_SOURCES = [
@@ -60,10 +59,6 @@ def slugify(title: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     return slug.strip("-")
-
-
-if slugify(TITLE) != SLUG:
-    raise SystemExit(f"TITLE {TITLE!r} slugifies to {slugify(TITLE)!r}, not {SLUG!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +161,40 @@ REPLACEMENT_B = """        # --- BIOCELL PATCH E003b: save the final predicted g
         division_sources: dict[int, int] = {}
         for edge in edges:"""
 
-def apply_patches(nb: dict, samples_per_embryo: int) -> dict:
+# ---------------------------------------------------------------------------
+# Patch C (optional) - disable add_safe_divisions_postlink via its existing
+# BIOHUB_OUTPUT_SAFE_DIVISIONS override.
+#
+# Evidence this heuristic is the entire problem (E005, 2026-08-06): on all 12
+# stratified samples, division_like_sources == safe_divisions_added exactly - the
+# base linker/ILP produces zero natural forks, every predicted division comes from
+# this one late-stage repair step, and it scored 0 TP / 18 FP / 7 FN on real GT.
+#
+# Reading the function itself explains why: for every node with exactly one
+# existing child, it looks for an unmatched orphan detection in the next frame
+# within SAFE_DIV_MAX_UM of the source and SAFE_DIV_SISTER_MAX_UM of the existing
+# child, and attaches it as a second child - purely geometric proximity, no
+# confidence or morphological check. On the largest sample (44b6_7a302da0) it added
+# 159 divisions against a SAFE_DIV_GLOBAL_FRAC_CAP-implied ceiling of ~163 - the cap
+# is nearly saturated, meaning the heuristic wants to fire even more and is only
+# being stopped by an arbitrary global limit, not by evidence of a real division.
+# ---------------------------------------------------------------------------
+
+ANCHOR_C = ANCHOR_A  # same insertion point as Patch A - both must run before CONFIG cell
+
+REPLACEMENT_C = """# --- BIOCELL PATCH E007c: disable add_safe_divisions_postlink ---
+# See docs/METRIC_ANALYSIS.md property 5 and docs/MISTAKES.md for the evidence.
+os.environ["BIOHUB_OUTPUT_SAFE_DIVISIONS"] = "0"
+print("E007: BIOHUB_OUTPUT_SAFE_DIVISIONS -> 0 (heuristic disabled)")
+# --- END BIOCELL PATCH E007c ---
+
+"""
+
+
+def apply_patches(nb: dict, samples_per_embryo: int, disable_safe_divisions: bool) -> dict:
     replacement_a = REPLACEMENT_A_TEMPLATE.format(samples_per_embryo=samples_per_embryo)
+    if disable_safe_divisions:
+        replacement_a = REPLACEMENT_C + replacement_a
     patches = [
         ("A: stratified TRAIN subset via BIOHUB_TEST_DIR", ANCHOR_A, replacement_a),
         ("B: save predicted graph as .geff", ANCHOR_B, REPLACEMENT_B),
@@ -201,15 +228,19 @@ def apply_patches(nb: dict, samples_per_embryo: int) -> dict:
     return nb
 
 
-def build(samples_per_embryo: int) -> Path:
+def build(samples_per_embryo: int, slug: str, title: str, disable_safe_divisions: bool) -> Path:
+    if slugify(title) != slug:
+        raise SystemExit(f"title {title!r} slugifies to {slugify(title)!r}, not {slug!r}")
+
     if not BASELINE.exists():
         raise SystemExit(f"baseline not found: {BASELINE}")
     nb = json.loads(BASELINE.read_text(encoding="utf-8"))
     print(f"baseline: {BASELINE.name} ({len(nb['cells'])} cells)")
-    nb = apply_patches(nb, samples_per_embryo)
+    nb = apply_patches(nb, samples_per_embryo, disable_safe_divisions)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_nb = OUT_DIR / f"{SLUG}.ipynb"
+    out_dir = REPO / "notebooks" / slug.replace("biohub-", "", 1)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_nb = out_dir / f"{slug}.ipynb"
     out_nb.write_text(json.dumps(nb, indent=1), encoding="utf-8")
 
     username = json.loads((Path.home() / ".kaggle" / "kaggle.json").read_text())["username"]
@@ -222,11 +253,12 @@ def build(samples_per_embryo: int) -> Path:
     docker_image = baseline_meta.get("docker_image", "")
     print(f"  machine_shape: {machine_shape}")
     print(f"  samples_per_embryo: {samples_per_embryo}")
+    print(f"  disable_safe_divisions: {disable_safe_divisions}")
 
     meta = {
-        "id": f"{username}/{SLUG}",
-        "title": TITLE,
-        "code_file": f"{SLUG}.ipynb",
+        "id": f"{username}/{slug}",
+        "title": title,
+        "code_file": f"{slug}.ipynb",
         "language": "python",
         "kernel_type": "notebook",
         "is_private": "true",
@@ -243,9 +275,9 @@ def build(samples_per_embryo: int) -> Path:
     if docker_image:
         meta["docker_image"] = docker_image
 
-    (OUT_DIR / "kernel-metadata.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+    (out_dir / "kernel-metadata.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
     print(f"wrote {out_nb}")
-    return OUT_DIR
+    return out_dir
 
 
 def main() -> int:
@@ -255,9 +287,13 @@ def main() -> int:
     p.add_argument("--samples-per-embryo", type=int, default=6,
                     help="stratified sample count per embryo (default 6 = ~12 total, "
                          "a deliberately small first pass - see docs/STRATEGY.md)")
+    p.add_argument("--slug", default=DEFAULT_SLUG)
+    p.add_argument("--title", default=DEFAULT_TITLE)
+    p.add_argument("--disable-safe-divisions", action="store_true",
+                    help="E007: disable add_safe_divisions_postlink (see docs/MISTAKES.md)")
     args = p.parse_args()
 
-    out_dir = build(args.samples_per_embryo)
+    out_dir = build(args.samples_per_embryo, args.slug, args.title, args.disable_safe_divisions)
 
     if args.push:
         from kaggle.api.kaggle_api_extended import KaggleApi
