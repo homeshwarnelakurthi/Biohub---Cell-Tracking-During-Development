@@ -248,3 +248,41 @@ tells you what *does*.
 Worth noting what went right: the prediction was pre-registered before submitting, so this came back
 as a clean confirmed negative rather than something to explain away afterwards. Keep doing that.
 
+---
+
+## M015 — Our "CV" is measured on data the pre-trained weights were fit to
+**Date:** 2026-08-06, exposed by the E007 submission scoring 0.904 against a predicted 0.914-0.916
+**What happened.** E007 (disable `add_safe_divisions_postlink`) improved both embryo folds on our
+validation set (+0.0025 / +0.0002) and shipped per `verdict()`. On the real leaderboard it scored
+**0.904 against the baseline's 0.913** — a 0.009 *regression*, opposite in sign to the CV result.
+
+The arithmetic points straight at the cause. The division term carries weight 0.1, so losing 0.009
+implies the removed heuristic was earning a division Jaccard of about **0.09 on the hidden test
+set**. On our validation samples the identical heuristic measured **0.000** (0 TP / 18 FP / 7 FN).
+
+**Why.** The pipeline runs pre-trained weights (`pilkwang/biohub-temporal-unet3d-seed314159-v1`)
+that were fit on the competition *training* set — which is exactly where our 12/24 "validation"
+samples come from. The tracker is therefore far more accurate on our validation samples than on
+unseen data, leaving far fewer of the unmatched orphan detections that
+`add_safe_divisions_postlink` exists to recover. Judged on data the model memorised, an
+error-recovery heuristic looks like pure noise; on unseen data it recovers real divisions.
+
+This is not a flaw in `verdict()` or the two-fold discipline. Both worked correctly on the data they
+were given. The flaw is that the data is not held out from the *model*, only from the
+*post-processing tuning* — a distinction that went unexamined for six experiments.
+
+**Change.**
+1. **Treat CV as directional for post-processing that does not depend on model error, and unreliable
+   for anything that recovers from model failure.** Gap closing, division repair, short-track rescue
+   and relink fallbacks all fall in the second category and are systematically undervalued by our CV.
+2. Every ship decision from E007 onward is re-opened. E013's result is measured against the same
+   leaky baseline and cannot be trusted at face value.
+3. Prefer changes that are *additive* to the known-good 0.913 configuration over changes that remove
+   an existing mechanism, since removals are exactly what this bias mis-scores.
+4. The public LB is now the tie-breaker for this class of change, used deliberately and sparingly —
+   not because LB-tuning became acceptable (M003 still stands), but because our CV is known-biased
+   for it.
+
+The pre-registration is what made this legible: the prediction was written down before submitting,
+so the divergence was unmissable rather than something to rationalise afterwards. Keep doing that.
+

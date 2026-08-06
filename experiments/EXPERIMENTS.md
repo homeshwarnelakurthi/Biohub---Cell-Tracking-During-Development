@@ -100,6 +100,12 @@ the points.
 **E007 submission (recorded 2026-08-06, before submitting).** Predicted public LB: a small
 improvement over 0.913, in the neighborhood of +0.001 to +0.003 (0.914-0.916), not a large jump.
 
+**RESULT: 0.904. Prediction WRONG — and wrong in sign, not just magnitude.** The removed heuristic
+was earning roughly 0.09 division Jaccard on the hidden test set while measuring 0.000 on our
+validation samples. Root cause in MISTAKES M015: the pre-trained weights were fit on the training
+set our validation samples are drawn from, so error-recovery heuristics look worthless on data the
+model memorised. E007 is reverted; 0.913 (v1/E004) remains the best real score.
+
 Reason: on CV the fix improved both folds by +0.0025 (44b6) and +0.0002 (6bba) — real but modest,
 because it only removes division false positives and cleans up a few rescued-orphan nodes; TP for
 divisions is still 0, so `division_jaccard` itself is unmoved. The actual test-set distribution and
