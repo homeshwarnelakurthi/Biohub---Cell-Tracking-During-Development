@@ -8,6 +8,8 @@ its anchor text is not found exactly once, so a silent no-op is impossible.
 Usage:
     python tools/make_submission_notebook.py --dry-run
     python tools/make_submission_notebook.py --push
+    python tools/make_submission_notebook.py --push --slug biohub-submission-v2 \\
+        --title "Biohub Submission v2" --disable-safe-divisions
 """
 
 from __future__ import annotations
@@ -19,16 +21,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 BASELINE = REPO / "notebooks" / "biohub" / "biohub.ipynb"
-OUT_DIR = REPO / "notebooks" / "submission-v1"
 
-SLUG = "biohub-submission-v1"
-# Kaggle derives the kernel slug from the TITLE and quietly ignores a non-matching id in
-# kernel-metadata.json - it only emits a warning. A title of
-# "Biohub Submission v1 - confidence-ordered edges" created the kernel at
-# `biohub-submission-v1-confidence-ordered-edges`, and every subsequent status call against
-# the intended slug returned 403. Keep the title such that slugify(TITLE) == SLUG; the
-# assertion below enforces it.
-TITLE = "Biohub Submission v1"
+DEFAULT_SLUG = "biohub-submission-v1"
+DEFAULT_TITLE = "Biohub Submission v1"
 COMPETITION = "biohub-cell-tracking-during-development"
 
 
@@ -39,13 +34,6 @@ def slugify(title: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     return slug.strip("-")
-
-
-if slugify(TITLE) != SLUG:
-    raise SystemExit(
-        f"TITLE {TITLE!r} slugifies to {slugify(TITLE)!r}, not {SLUG!r}. "
-        "Kaggle would create the kernel at the slugified title and the id would be ignored."
-    )
 
 # Attached model/support datasets, carried over from the baseline notebook. Required
 # because submission notebooks run with internet disabled.
@@ -102,18 +90,44 @@ REPLACEMENT_1 = """        # --- BIOCELL PATCH 1: confidence-ordered edge ids + 
         division_sources: dict[int, int] = {}
         for edge in edges:"""
 
-PATCHES = [("confidence-ordered edges + out-degree cap", ANCHOR_1, REPLACEMENT_1)]
+# ---------------------------------------------------------------------------
+# Patch 2 (optional, --disable-safe-divisions) - turn off add_safe_divisions_postlink.
+#
+# E005 diagnosis (docs/METRIC_ANALYSIS.md property 5): division_like_sources exactly
+# equals safe_divisions_added on every sample tested - the base linker produces zero
+# natural forks, and every predicted division comes from this one heuristic, which
+# attaches any unmatched orphan detection within a few microns of an existing track as
+# a second child, purely on geometric proximity. Tested as E007 on 12 stratified train
+# samples: division FP dropped 18 -> 0 with TP unchanged at 0 (this doesn't fix
+# detection, it removes noise), and both embryo folds improved
+# (44b6 +0.0025, 6bba +0.0002) - shipped per biocell.cv.verdict().
+# ---------------------------------------------------------------------------
+
+ANCHOR_2 = """COMPETITION = "biohub-cell-tracking-during-development"
+COMP_DIR_CANDIDATES = ["""
+
+REPLACEMENT_2 = """# --- BIOCELL PATCH 2: disable add_safe_divisions_postlink (E007, shipped) ---
+os.environ["BIOHUB_OUTPUT_SAFE_DIVISIONS"] = "0"
+print("BIOCELL PATCH 2: BIOHUB_OUTPUT_SAFE_DIVISIONS -> 0 (heuristic disabled)")
+# --- END BIOCELL PATCH 2 ---
+
+COMPETITION = "biohub-cell-tracking-during-development"
+COMP_DIR_CANDIDATES = ["""
 
 
-def apply_patches(nb: dict) -> dict:
-    applied = {name: 0 for name, _, _ in PATCHES}
+def apply_patches(nb: dict, disable_safe_divisions: bool) -> dict:
+    patches = [("confidence-ordered edges + out-degree cap", ANCHOR_1, REPLACEMENT_1)]
+    if disable_safe_divisions:
+        patches.append(("disable add_safe_divisions_postlink", ANCHOR_2, REPLACEMENT_2))
+
+    applied = {name: 0 for name, _, _ in patches}
 
     for cell in nb["cells"]:
         if cell["cell_type"] != "code":
             continue
         src = "".join(cell["source"])
         changed = False
-        for name, anchor, replacement in PATCHES:
+        for name, anchor, replacement in patches:
             n = src.count(anchor)
             if n == 0:
                 continue
@@ -135,15 +149,22 @@ def apply_patches(nb: dict) -> dict:
     return nb
 
 
-def build() -> Path:
+def build(slug: str, title: str, disable_safe_divisions: bool) -> Path:
+    if slugify(title) != slug:
+        raise SystemExit(
+            f"title {title!r} slugifies to {slugify(title)!r}, not {slug!r}. "
+            "Kaggle would create the kernel at the slugified title and the id would be ignored."
+        )
+
     if not BASELINE.exists():
         raise SystemExit(f"baseline not found: {BASELINE}")
     nb = json.loads(BASELINE.read_text(encoding="utf-8"))
     print(f"baseline: {BASELINE.name} ({len(nb['cells'])} cells)")
-    nb = apply_patches(nb)
+    nb = apply_patches(nb, disable_safe_divisions)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_nb = OUT_DIR / f"{SLUG}.ipynb"
+    out_dir = REPO / "notebooks" / slug.replace("biohub-", "", 1)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_nb = out_dir / f"{slug}.ipynb"
     out_nb.write_text(json.dumps(nb, indent=1), encoding="utf-8")
 
     username = json.loads((Path.home() / ".kaggle" / "kaggle.json").read_text())["username"]
@@ -169,9 +190,9 @@ def build() -> Path:
     print(f"  docker_image:  {docker_image[:60]}{'...' if len(docker_image) > 60 else ''}")
 
     meta = {
-        "id": f"{username}/{SLUG}",
-        "title": TITLE,
-        "code_file": f"{SLUG}.ipynb",
+        "id": f"{username}/{slug}",
+        "title": title,
+        "code_file": f"{slug}.ipynb",
         "language": "python",
         "kernel_type": "notebook",
         "is_private": "true",
@@ -186,19 +207,23 @@ def build() -> Path:
     if docker_image:
         meta["docker_image"] = docker_image
 
-    (OUT_DIR / "kernel-metadata.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+    (out_dir / "kernel-metadata.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
 
     print(f"wrote {out_nb}")
-    return OUT_DIR
+    return out_dir
 
 
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--push", action="store_true", help="push to Kaggle after building")
     p.add_argument("--dry-run", action="store_true", help="build only (default)")
+    p.add_argument("--slug", default=DEFAULT_SLUG)
+    p.add_argument("--title", default=DEFAULT_TITLE)
+    p.add_argument("--disable-safe-divisions", action="store_true",
+                    help="apply patch 2: disable add_safe_divisions_postlink (E007, shipped)")
     args = p.parse_args()
 
-    out_dir = build()
+    out_dir = build(args.slug, args.title, args.disable_safe_divisions)
 
     if args.push:
         from kaggle.api.kaggle_api_extended import KaggleApi
