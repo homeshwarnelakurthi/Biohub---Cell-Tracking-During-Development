@@ -91,11 +91,28 @@ removal destroys real edges (−0.099 J for +0.0002 multiplier at the 5% step). 
 ~99% metric-invisible nodes, which is the opposite regime. The experiment confirms the mechanism and
 the slope; it says nothing about the operating point.
 
-> **The honest state: this lever is unresolved and cannot be settled without real predictions.**
 > An earlier version of this document called it "the highest expected-value item" on the strength of
-> a simulation with invented FP fractions. That was overstated — see MISTAKES M009. It needs stage 3
-> of the harness against actual pipeline output. `src/biocell/node_budget.py` does the sweep once
-> those exist.
+> a simulation with invented FP fractions. That was overstated — see MISTAKES M009.
+
+### Measured against real predictions (E003-score, 2026-08-06, 12 stratified train samples)
+
+```
+44b6   mean total_node_ratio = -0.3060  ->  multiplier 1.0306  (rewarded)
+6bba   mean total_node_ratio = -0.0339  ->  multiplier 1.0034  (rewarded)
+```
+
+**Both folds are already net-rewarded** — the baseline under-predicts nodes on average, banking a
+small multiplier bonus (+3.1% on `44b6`, +0.3% on `6bba`) without any tuning. The upside remaining is
+small and asymmetric: `44b6` has more room, `6bba` almost none.
+
+The per-sample picture is mixed, not uniform: 9 of 12 samples under-predict (negative ratio,
+rewarded), 3 over-predict (`6bba_6479435d` +0.046, `6bba_d6ecebbb` +0.097, `6bba_f8ffd5e7` +0.018).
+Those three are exactly where pruning would help; the other nine are already past the point where
+pruning pays. A single global threshold cannot serve both regimes — see `node_budget.py`'s per-sample
+sweep for why this needs to be tuned per operating point, not as one global cut.
+
+**Conclusion: this lever is measured, and the remaining upside is small.** Worth a light per-sample
+tune once other levers are exhausted, not worth prioritising.
 
 ### 2. False positives are only charged in annotated territory
 
@@ -175,13 +192,42 @@ multiplier. Worth it only if it recovers two edges that were otherwise FN.
 
 `score = adj_edge_jaccard + 0.1 * division_jaccard`, micro-averaged over all samples.
 
-We need +0.034 to reach #1. If our division Jaccard is around 0.25 and the leaders sit near 0.60,
-that difference alone is +0.035 — the entire gap. Divisions are rare events, so this term is noisy
-and under-optimized by most teams, which is exactly why it is where the leaders likely separate.
+We need +0.034 to reach #1. Divisions are rare events, so this term is noisy and under-optimized by
+most teams, which is exactly why it is where the leaders likely separate.
 
 The division matcher (`division_metrics.py`) requires: local parent anchoring, two *distinct*
 daughter branches, correct directed local topology, valid branch evidence, and unmerged branches. A
 division that is topologically right but whose daughters merge back is scored as FP **and** FN.
+
+### Measured: division_jaccard = 0.0000 on both embryo folds (E003-score, 2026-08-06)
+
+This was a guess ("around 0.25") until now. The real number, from 12 stratified train samples scored
+against real ground truth:
+
+```
+44b6   div TP/FP/FN = 0/15/3    division_jaccard = 0.0000
+6bba   div TP/FP/FN = 0/3/4     division_jaccard = 0.0000
+ALL    div TP/FP/FN = 0/18/7    division_jaccard = 0.0000
+```
+
+**Zero true-positive divisions across 25 division-related events, on both folds.** Not "weak" —
+literally none of the 18 predicted divisions in this sample matched a real one, and none of the 7 real
+divisions were recovered. This is not noise: it is the same result on two embryos with very different
+node counts and sample sizes, which is exactly the kind of cross-fold agreement the leave-one-embryo
+discipline (MISTAKES M004) is meant to surface as trustworthy.
+
+The FP/FN split says the failure isn't one-directional — the pipeline both invents divisions that
+aren't there (18 FP, concentrated in a few large/dense samples — `44b6_7a302da0` alone accounts for 7)
+and misses real ones (7 FN spread more evenly). A single threshold nudge in either direction trades
+one failure mode for the other; whatever is wrong here is structural, not a tuning knob.
+
+**Caveat on strength of evidence:** n=12 is thin for a rare event — 25 division-events total is a
+small sample to characterize a failure mode precisely. Zero-on-both-folds is strong enough to justify
+investigating now, not yet strong enough to claim the true division Jaccard is exactly zero on the
+full test distribution. The next step is to inspect specific FP/FN cases, not just the aggregate.
+
+If the leaders are anywhere above ~0.35 division Jaccard, this term alone accounts for the entire gap
+to #1. That makes it the clearest priority target this project has had so far.
 
 ---
 

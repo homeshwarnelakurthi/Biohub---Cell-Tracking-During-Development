@@ -50,25 +50,29 @@ merge-collapse rule cannot move TP/FP regardless of ordering. See METRIC_ANALYSI
 Kept in `src/biocell/submission.py` because it becomes live again if a future change (a more
 permissive division policy under lever 3) ever emits three children.
 
-### Lever 2 — node budget (cost: ~0 GPU hours, CPU sweep only) — SIZE UNRESOLVED
-The adjusted-Jaccard multiplier `(1 - 0.1 * (N_pred - N_true)/N_true)` is clamped only at the bottom,
-so under-predicting nodes multiplies the score *up*.
+### Lever 2 — node budget — MEASURED, small remaining upside
+Measured on real predictions (E003-score, 2026-08-06, 12 stratified train samples): both embryo folds
+are already net-rewarded — `44b6` mean ratio -0.306 (multiplier 1.031), `6bba` mean ratio -0.034
+(multiplier 1.003). The baseline already under-predicts nodes on average and banks a small bonus for
+free. 3 of 12 samples over-predict and would benefit from pruning; the other 9 are already past the
+point where pruning pays. Full detail in METRIC_ANALYSIS property 1.
 
-Measurement on 2026-08-03 changed the shape of this lever. `estimated_number_of_nodes` is 15k–64k per
-sample against 51–788 annotated nodes (0.16–1.34% density), so the coefficient is `0.1/N_true ≈
-3.8e-6` per node: trimming a thin confidence tail is worth ~0.0017, not the ~0.047 an earlier draft
-claimed from a simulation with invented inputs (MISTAKES M009).
+**Downgraded from "unresolved" to "small and mostly banked already."** Worth a light per-sample tune
+later, not worth prioritising now.
 
-The real argument is different and possibly larger: ~99% of predicted nodes match no GT node, earn
-nothing in TP, and are still charged against the node count. But the operating point cannot be found
-without real predictions. **Treat as unresolved until stage 3 of the harness runs.**
+### Lever 3 — divisions — MEASURED, and now the clear priority
+Measured on the same 12 samples: **division_jaccard = 0.0000 on both folds** — 0 true positives out
+of 25 division-related events (18 FP, 7 FN), on two embryos with very different sample sizes. This
+was a guess ("~0.25") before 2026-08-06; it is now a hard number with cross-fold agreement.
 
-### Lever 3 — divisions (cost: moderate)
-Only 0.1-weighted, but the gap we need is 0.035. Moving division Jaccard from ~0.25 to ~0.60 is worth
-about that entire gap on its own. Divisions are rare, noisy, and consequently under-tuned by the
-field. The current pipeline gates them behind `SAFE_DIV_*` caps (`SAFE_DIV_FRAME_FRAC_CAP = 0.008`,
-`SAFE_DIV_GLOBAL_FRAC_CAP = 0.004`) that were tuned for precision; whether that trade is right is an
-open, measurable question.
+The current pipeline gates divisions behind `SAFE_DIV_*` caps (`SAFE_DIV_FRAME_FRAC_CAP = 0.008`,
+`SAFE_DIV_GLOBAL_FRAC_CAP = 0.004`) and geometry thresholds. Zero TP with both FP and FN present means
+the failure is not a simple over/under-tuned threshold — tightening fixes FP at the cost of more FN
+and vice versa. Needs inspection of specific failure cases, not a threshold sweep. Full detail,
+including the caveat on evidence strength at n=12, in METRIC_ANALYSIS property 5.
+
+**This is now the clearest priority in the project.** If the leaders are anywhere above ~0.35 division
+Jaccard, this term alone explains the entire gap to #1.
 
 ### Lever 4 — link aggressiveness (cost: low)
 False positives are only charged on edges touching an annotated GT node (METRIC_ANALYSIS property 2).
@@ -127,16 +131,17 @@ If A and B are the same configuration, deliberately weaken B until it isn't.
 
 First place is 0.948 against our 0.913, with 1935 teams and 56 days.
 
-Both cheap levers are now gone. Lever 2 looked like a large win until measurement removed the claim
-(M009), and lever 1 was tested outright and scored exactly nothing (E004). Neither failure was
-expensive, but together they mean **no remaining lever has a known sign**, and levers 2, 3 and 4 all
-sit behind the same missing input: predicted geffs over the training set.
+Lever 1 tested dead. Lever 2 turned out small once measured. But E003-score (2026-08-06) changed the
+picture: **division_jaccard = 0.0000 on both folds, with cross-fold agreement.** That is no longer a
+guess feeding a ranking — it is a measured, structural failure, sized almost exactly to the gap that
+separates us from #1. This is the first genuinely promising finding this project has had.
 
-Meanwhile the field is moving. Our score has not changed since 29 July and our rank has drifted
-200 -> 238 on the same 0.913, because teams around us keep improving. Standing still is losing
-ground, and the gap to first has widened slightly rather than closed.
+The field is still moving — our score hasn't changed since 29 July and rank drifted 200 -> 238 on the
+same 0.913 — so there's real time pressure. But for the first time the next step isn't "measure and
+see"; it's to go fix a specific, quantified problem.
 
-Closing the full 0.035 to #1 requires lever 3 to work, and that is a research question, not an
-engineering certainty — the leaders are not standing still either. A realistic target is the prize
-zone (top 7, +0.020), with higher contingent on the division work landing. This estimate gets revised
-against measured CV, not restated as a goal.
+Closing the full 0.035 to #1 still requires lever 3 to actually improve, not just be diagnosed — a
+measured 0-TP baseline tells us where the problem is, not that it's fixable within 56 days. But it is
+a real, well-defined engineering target now rather than an open research question about where the gap
+lives. A realistic target is the prize zone (top 7, +0.020), with real upside if division detection
+can be brought off zero. This estimate gets revised against measured CV, not restated as a goal.

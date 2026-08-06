@@ -20,15 +20,17 @@ Ordered by expected gain per GPU-hour. Rationale for the ordering is in
 | ID | Change | Lever | Cost | Status |
 | --- | --- | --- | --- | --- |
 | E003 | **Produce predicted geffs for the training samples** — stratified subset (6/embryo, 12 total), via `biohub-validation-e003` | critical path | GPU | **done** — 12/12 geffs produced, ~24 min predict time (~2 min/sample, scales to ~6.6h for the full 199) |
-| E003-score | Score E003 predictions against real GT per embryo, via `biohub-score-e003` (kernel-chained onto E003's output) | unblocks 2/3/4 | CPU | running |
-| E005 | Node-budget sweep on real predictions — resolve the M009 question | 2 | CPU | blocked on E003 |
-| E006 | Division threshold sweep (`SAFE_DIV_FRAME_FRAC_CAP`, `SAFE_DIV_GLOBAL_FRAC_CAP`, geometry gates) | 3 | GPU | blocked on E003 |
-| E007 | Raise link aggressiveness, paid for from the node budget | 4 | GPU | blocked on E005 |
-| E008 | Detector retraining | 5 | GPU × many | last resort |
+| E003-score | 2026-08-06 | Score E003 predictions (12 stratified train samples) against real GT, per embryo | 44b6: 0.9349 | 6bba: 0.9306 | n/a (measurement, not a change) | **done** | **division_jaccard = 0.0000 on BOTH folds** (0 TP / 18 FP / 7 FN across 25 events) — was a guess (~0.25), now measured and cross-fold-consistent. Node budget: both folds net-rewarded already (44b6 mult 1.031, 6bba mult 1.003), upside mostly banked. This is a baseline measurement of E000, not a lever test — no ship/no-ship verdict applies. |
+| E005 | Inspect the 25 individual division FP/FN cases from E003-score — which frames, what geometry, why 0 TP | 3 | CPU | **next** |
+| E006 | Node-budget per-sample tune on the 3 over-predicting samples | 2 | CPU | low priority |
+| E007 | Fix division detection based on E005 findings, re-run E003+score to verify | 3 | GPU | blocked on E005 |
+| E008 | Raise link aggressiveness, paid for from the node budget | 4 | GPU | low priority |
+| E009 | Detector retraining | 5 | GPU × many | last resort |
 
-**Critical path note.** E005–E007 all depend on the same missing input: predicted geffs over the
-training set. Producing them (E003) is the bottleneck, not any individual lever. The harness is ready
-and idle until it has predictions to score.
+**Critical path note.** E003 unblocked everything and immediately surfaced a concrete, measured
+problem: division detection produces zero true positives on 12 held-out samples. The bottleneck is no
+longer "no predictions to measure" — it's "diagnose why divisions fail" (E005), which needs to happen
+before any threshold sweep (E007) can be anything but guessing again.
 
 ## Pre-registered predictions
 
