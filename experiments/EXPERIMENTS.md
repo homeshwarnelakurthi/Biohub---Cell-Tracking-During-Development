@@ -23,8 +23,8 @@ Ordered by expected gain per GPU-hour. Rationale for the ordering is in
 | E003-score | 2026-08-06 | Score E003 predictions (12 stratified train samples) against real GT, per embryo | 44b6: 0.9349 | 6bba: 0.9306 | n/a (measurement, not a change) | **done** | **division_jaccard = 0.0000 on BOTH folds** (0 TP / 18 FP / 7 FN across 25 events) — was a guess (~0.25), now measured and cross-fold-consistent. Node budget: both folds net-rewarded already (44b6 mult 1.031, 6bba mult 1.003), upside mostly banked. This is a baseline measurement of E000, not a lever test — no ship/no-ship verdict applies. |
 | E005 | 2026-08-06 | Root-cause the 0-TP division result — read `add_safe_divisions_postlink` and cross-check `run_stats.csv` | n/a | n/a | n/a (analysis, not a run) | **done** | `division_like_sources == safe_divisions_added` exactly on 12/12 samples: the base linker produces zero natural forks, every predicted division comes from this one late-stage heuristic. It attaches any unmatched orphan detection within a few µm of an existing single-child node as a second child — pure geometric proximity, no confidence or morphology check. Largest sample nearly saturates `SAFE_DIV_GLOBAL_FRAC_CAP` (159 added vs ~163 cap), meaning it wants to fire even more. |
 | E007 | 2026-08-06 | Disable `add_safe_divisions_postlink` (`BIOHUB_OUTPUT_SAFE_DIVISIONS=0`), same 12 samples, re-score | **44b6: 0.9374 (+0.0025)** | **6bba: 0.9308 (+0.0002)** | not yet submitted | **SHIP** (`biocell.cv.verdict()` confirmed) | division FP 18→0 on both folds; division_jaccard unchanged at 0.0 (TP still 0 — this removes noise, doesn't fix detection). Edge Jaccard +0.0023 on 44b6 (spurious edges had been touching annotated GT nodes), unchanged on 6bba (none of its removed edges were annotated-adjacent — its whole gain is from the node-budget multiplier ticking up). **Small, real, safe. Does not close the division gap by itself** — TP=0 is still unsolved. |
-| E013 | **Keep motion relink, add second children only where the ILP proposed a division** (learned signal) instead of `add_safe_divisions_postlink`'s geometric proximity | 3 | GPU | **next** |
-| E014 | Enforce in-degree <= 1 by confidence at end of post-processing (needed by any relink-off config; also unblocks E012's guard) | 3 | GPU | if E013 needs it |
+| E014 | Confirm E013 at 24 samples (12/embryo) before submitting — current CV rests on 7 GT divisions | 3 | GPU ~72min | **next** |
+| E015 | Sweep `BIOHUB_ILP_DIVISION_MIN_PROB` if division FP needs tightening (11 FP vs 2 TP today) | 3 | GPU | after E014 |
 | E006 | Node-budget per-sample tune on the 3 over-predicting samples | 2 | CPU | low priority |
 | E008 | Raise link aggressiveness, paid for from the node budget | 4 | GPU | low priority |
 | E009 | Detector retraining | 5 | GPU × many | last resort |
@@ -42,6 +42,22 @@ appearance when `edge_prob > 0.90` (see METRIC_ANALYSIS property 5). These sweep
 | E011 | `division_weight` 0.6, relink ON | — | — | **0 forks** — weight is irrelevant while relink runs |
 | E010 | `division_weight` 0.4, relink ON | — | — | same, 0 forks |
 | E012 | `division_weight` 0.6, **relink OFF** | 0.8249 (-0.1125) | 0.9212 (-0.0096) | **REJECT** — degrades both folds |
+| **E013** | **relink ON + restore ILP-proposed divisions** | **0.9380 (+0.0006)** | **0.9563 (+0.0255)** | **SHIP** — improves both folds |
+
+**E013 is the first substantial gain this project has produced.** Keeping motion relink preserved
+edge quality exactly (`44b6` edge Jaccard 0.9104 vs E007's 0.9099, node recall identical at 0.9866),
+while restoring 539 ILP-proposed divisions lifted division Jaccard from a flat 0.0000 to **0.2500 on
+`6bba`** — worth +0.0255 on that fold.
+
+It also beat E012 on divisions despite E012 having *more* forks: 2 TP / 11 FP here vs 2 TP / 15 FP
+there. Requiring the target to have no existing parent filtered 215 candidates and removed 4 false
+positives without costing a true one — the guard-safety constraint turned out to also be a precision
+filter.
+
+**Why the folds differ so much (+0.0006 vs +0.0255):** all 3 of `44b6`'s ground-truth divisions are
+still missed (0 TP / 7 FP), while `6bba` recovers 2 of 4. That asymmetry is unexplained and is the
+main reason E014 re-runs at 24 samples before this is submitted — 7 GT divisions across 12 samples is
+too thin to conclude the method genuinely works better on one embryo than the other.
 
 **E012 is the informative one.** Disabling motion relink let the ILP's divisions survive: 461 natural
 forks, and **2 true-positive divisions — the first this project has ever produced** (`6bba` division
