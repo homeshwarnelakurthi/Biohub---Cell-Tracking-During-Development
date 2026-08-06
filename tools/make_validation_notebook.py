@@ -200,11 +200,106 @@ def _env_override_block(env: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Patch D (--ilp-divisions) - re-add ILP-proposed divisions after motion relink.
+#
+# E012 established both halves of the problem:
+#   * motion_relink must stay - removing it cost 0.10 node recall and 0.12 edge Jaccard
+#   * the ILP genuinely knows where divisions are - it produced the project's first 2
+#     true-positive divisions once its output was allowed to survive
+# and E005 established that add_safe_divisions_postlink, which picks second children by
+# geometric proximity to a leftover detection, has 0% precision.
+#
+# So: keep relink exactly as-is, then restore a second child ONLY where the ILP proposed
+# one. `raw_edges` is still in scope at this point and holds the ILP solution with its
+# edge probabilities.
+#
+# Guard-safe by construction: a candidate is only added when the target currently has no
+# parent (keeps max in-degree 1, the constraint E012 violated) and the source currently has
+# exactly one child (makes max out-degree 2, never 3).
+# ---------------------------------------------------------------------------
+
+ANCHOR_D = """        raw_node_count = len(nodes_by_id)
+        nodes_by_id, edges, filter_stats = filter_output_graph(nodes_by_id, raw_edges, dataset=dataset, deepcenter_bundle=DEEPCENTER_VETO_DETECTOR)
+        if not nodes_by_id:
+            raise AssertionError(f"{dataset}: post-processing removed every node")"""
+
+REPLACEMENT_D = """        raw_node_count = len(nodes_by_id)
+        nodes_by_id, edges, filter_stats = filter_output_graph(nodes_by_id, raw_edges, dataset=dataset, deepcenter_bundle=DEEPCENTER_VETO_DETECTOR)
+        if not nodes_by_id:
+            raise AssertionError(f"{dataset}: post-processing removed every node")
+
+        # --- BIOCELL PATCH E013d: restore ILP-proposed divisions after motion relink ---
+        _ilp_children_e013: dict[int, list[tuple[int, float]]] = {}
+        for _re_e013 in raw_edges:
+            _s_e013 = int(_re_e013["source_id"])
+            _t_e013 = int(_re_e013["target_id"])
+            _p_e013 = _re_e013.get("edge_prob")
+            _ilp_children_e013.setdefault(_s_e013, []).append(
+                (_t_e013, 0.0 if _p_e013 is None else float(_p_e013))
+            )
+
+        _out_e013: dict[int, int] = {}
+        _in_e013: dict[int, int] = {}
+        _existing_e013 = set()
+        for _e_e013 in edges:
+            _s_e013 = int(_e_e013["source_id"])
+            _t_e013 = int(_e_e013["target_id"])
+            _out_e013[_s_e013] = _out_e013.get(_s_e013, 0) + 1
+            _in_e013[_t_e013] = _in_e013.get(_t_e013, 0) + 1
+            _existing_e013.add((_s_e013, _t_e013))
+
+        _added_e013 = 0
+        _skipped_parent_e013 = 0
+        for _src_e013, _kids_e013 in _ilp_children_e013.items():
+            if len(_kids_e013) < 2:
+                continue                                   # ILP saw no division here
+            if _out_e013.get(_src_e013, 0) != 1:
+                continue                                   # keep max out-degree at 2
+            _src_node_e013 = nodes_by_id.get(_src_e013)
+            if _src_node_e013 is None:
+                continue
+            for _tgt_e013, _prob_e013 in sorted(_kids_e013, key=lambda kv: kv[1], reverse=True):
+                if (_src_e013, _tgt_e013) in _existing_e013:
+                    continue
+                _tgt_node_e013 = nodes_by_id.get(_tgt_e013)
+                if _tgt_node_e013 is None:
+                    continue
+                if int(_tgt_node_e013["t"]) != int(_src_node_e013["t"]) + 1:
+                    continue                               # metric only counts t -> t+1
+                if _in_e013.get(_tgt_e013, 0) != 0:
+                    _skipped_parent_e013 += 1
+                    continue                               # never create a merge
+                if _prob_e013 < ILP_DIVISION_MIN_PROB:
+                    continue
+                edges.append({
+                    "source_id": _src_e013,
+                    "target_id": _tgt_e013,
+                    "edge_prob": _prob_e013,
+                    "distance_um": edge_distance_um(_src_node_e013, _tgt_node_e013),
+                    "ilp_division": 1,
+                })
+                _out_e013[_src_e013] = _out_e013.get(_src_e013, 0) + 1
+                _in_e013[_tgt_e013] = 1
+                _existing_e013.add((_src_e013, _tgt_e013))
+                _added_e013 += 1
+                break                                      # at most one extra child
+        filter_stats["ilp_divisions_added"] = _added_e013
+        filter_stats["ilp_divisions_skipped_has_parent"] = _skipped_parent_e013
+        print(f"  {dataset}: ILP divisions restored={_added_e013} "
+              f"(skipped, target already had a parent: {_skipped_parent_e013})")
+        # --- END BIOCELL PATCH E013d ---"""
+
+REPLACEMENT_D_CONST = """ILP_DIVISION_MIN_PROB = float(os.environ.get("BIOHUB_ILP_DIVISION_MIN_PROB", "0.0"))
+"""
+
+
 def apply_patches(
     nb: dict,
     samples_per_embryo: int,
     disable_safe_divisions: bool,
     env: dict[str, str] | None = None,
+    ilp_divisions: bool = False,
 ) -> dict:
     replacement_a = REPLACEMENT_A_TEMPLATE.format(samples_per_embryo=samples_per_embryo)
 
@@ -217,10 +312,15 @@ def apply_patches(
 
     if overrides:
         replacement_a = _env_override_block(overrides) + replacement_a
+    if ilp_divisions:
+        # the threshold constant must be defined before the output loop reads it
+        replacement_a = REPLACEMENT_D_CONST + replacement_a
     patches = [
         ("A: stratified TRAIN subset via BIOHUB_TEST_DIR", ANCHOR_A, replacement_a),
         ("B: save predicted graph as .geff", ANCHOR_B, REPLACEMENT_B),
     ]
+    if ilp_divisions:
+        patches.append(("D: restore ILP-proposed divisions after relink", ANCHOR_D, REPLACEMENT_D))
 
     applied = {name: 0 for name, _, _ in patches}
     for cell in nb["cells"]:
@@ -251,7 +351,7 @@ def apply_patches(
 
 
 def build(samples_per_embryo: int, slug: str, title: str, disable_safe_divisions: bool,
-          env: dict[str, str] | None = None) -> Path:
+          env: dict[str, str] | None = None, ilp_divisions: bool = False) -> Path:
     if slugify(title) != slug:
         raise SystemExit(f"title {title!r} slugifies to {slugify(title)!r}, not {slug!r}")
 
@@ -259,7 +359,7 @@ def build(samples_per_embryo: int, slug: str, title: str, disable_safe_divisions
         raise SystemExit(f"baseline not found: {BASELINE}")
     nb = json.loads(BASELINE.read_text(encoding="utf-8"))
     print(f"baseline: {BASELINE.name} ({len(nb['cells'])} cells)")
-    nb = apply_patches(nb, samples_per_embryo, disable_safe_divisions, env)
+    nb = apply_patches(nb, samples_per_embryo, disable_safe_divisions, env, ilp_divisions)
 
     out_dir = REPO / "notebooks" / slug.replace("biohub-", "", 1)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -279,6 +379,7 @@ def build(samples_per_embryo: int, slug: str, title: str, disable_safe_divisions
     print(f"  disable_safe_divisions: {disable_safe_divisions}")
     if env:
         print(f"  env overrides: {env}")
+    print(f"  ilp_divisions: {ilp_divisions}")
 
     meta = {
         "id": f"{username}/{slug}",
@@ -316,6 +417,8 @@ def main() -> int:
     p.add_argument("--title", default=DEFAULT_TITLE)
     p.add_argument("--disable-safe-divisions", action="store_true",
                     help="E007: disable add_safe_divisions_postlink (see docs/MISTAKES.md)")
+    p.add_argument("--ilp-divisions", action="store_true",
+                    help="E013: re-add ILP-proposed divisions after motion relink")
     p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
                     help="override any BIOHUB_* config var the baseline reads from os.environ; "
                          "repeatable, e.g. --env BIOHUB_ILP_DIVISION_WEIGHT=0.4")
@@ -331,7 +434,7 @@ def main() -> int:
         env[key] = value
 
     out_dir = build(args.samples_per_embryo, args.slug, args.title,
-                    args.disable_safe_divisions, env)
+                    args.disable_safe_divisions, env, args.ilp_divisions)
 
     if args.push:
         from kaggle.api.kaggle_api_extended import KaggleApi
