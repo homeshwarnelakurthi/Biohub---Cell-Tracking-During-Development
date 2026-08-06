@@ -87,6 +87,12 @@ unless the scorer source is read.
 and `cap_out_degree()` applies the cap ourselves by confidence. Read the scorer source, not the prose,
 before trusting any assumption about how predictions are counted.
 
+> **Retracted 2026-08-04 by E004.** "This has been silently costing us" was wrong — it was inferred
+> from the scorer, never measured. The baseline already enforces out-degree <= 2, so the rule never
+> fires and the fix scored exactly 0.913. The entry stays because the *scorer behaviour* it describes
+> is accurate and still constrains future changes; only the claim of a live cost was false. See M014
+> for the methodological lesson.
+
 ---
 
 ## M007 — Unpinned `pip install` broke numpy's ABI inside the Kaggle image
