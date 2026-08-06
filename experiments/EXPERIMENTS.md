@@ -54,6 +54,21 @@ property 3 needs its precondition stated: the rule is real, but the baseline nev
 If it comes back different, my reading of the scorer is wrong somewhere and that is worth more than
 the points.
 
+**E007 submission (recorded 2026-08-06, before submitting).** Predicted public LB: a small
+improvement over 0.913, in the neighborhood of +0.001 to +0.003 (0.914-0.916), not a large jump.
+
+Reason: on CV the fix improved both folds by +0.0025 (44b6) and +0.0002 (6bba) — real but modest,
+because it only removes division false positives and cleans up a few rescued-orphan nodes; TP for
+divisions is still 0, so `division_jaccard` itself is unmoved. The actual test-set distribution and
+sample composition differ from the 12-sample CV subset, so the transferred magnitude is uncertain,
+but the *sign* should hold — nothing about the mechanism (spurious edges/nodes in a heuristic that
+demonstrably never produces a correct division) is specific to the CV samples.
+
+If this comes back below 0.913, the CV-to-LB relationship for this fix doesn't transfer and needs
+investigating before trusting CV again. If it lands in the predicted range, that is real confirmation
+CV can be trusted here. If it lands much higher than +0.003, something about the real test
+distribution differs from CV in a way worth understanding.
+
 ## What to record per experiment
 
 - The exact config diff, not a description of it.
