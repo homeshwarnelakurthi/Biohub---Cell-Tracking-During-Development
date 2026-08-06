@@ -74,7 +74,9 @@ def to_notebook(cells: list[tuple[str, str]], gpu: bool = False) -> dict:
 
 
 def push(script: Path, slug: str, title: str, *, internet: bool, gpu: bool,
-         username: str | None = None) -> None:
+         username: str | None = None, kernel_sources: list[str] | None = None,
+         dataset_sources: list[str] | None = None,
+         competition_sources: list[str] | None = None) -> None:
     from kaggle.api.kaggle_api_extended import KaggleApi
     api = KaggleApi()
     api.authenticate()
@@ -96,9 +98,9 @@ def push(script: Path, slug: str, title: str, *, internet: bool, gpu: bool,
             "is_private": "true",
             "enable_gpu": "true" if gpu else "false",
             "enable_internet": "true" if internet else "false",
-            "competition_sources": [COMPETITION],
-            "dataset_sources": [],
-            "kernel_sources": [],
+            "competition_sources": competition_sources or [COMPETITION],
+            "dataset_sources": dataset_sources or [],
+            "kernel_sources": kernel_sources or [],
         }, indent=1), encoding="utf-8")
 
         print(f"pushing {username}/{slug} (gpu={gpu}, internet={internet}) ...")
@@ -113,6 +115,10 @@ def main() -> int:
     p.add_argument("--title", required=True)
     p.add_argument("--internet", action="store_true", help="enable internet (validation only)")
     p.add_argument("--gpu", action="store_true")
+    p.add_argument("--kernel-source", action="append", default=[],
+                    help="<owner>/<kernel-slug> to attach as input; repeatable")
+    p.add_argument("--dataset-source", action="append", default=[],
+                    help="<owner>/<dataset-slug> to attach as input; repeatable")
     p.add_argument("--dry-run", action="store_true", help="write the ipynb locally, do not push")
     args = p.parse_args()
 
@@ -124,7 +130,8 @@ def main() -> int:
         print(f"wrote {out}  ({kinds.count('code')} code, {kinds.count('markdown')} markdown)")
         return 0
 
-    push(args.script, args.slug, args.title, internet=args.internet, gpu=args.gpu)
+    push(args.script, args.slug, args.title, internet=args.internet, gpu=args.gpu,
+         kernel_sources=args.kernel_source, dataset_sources=args.dataset_source)
     return 0
 
 

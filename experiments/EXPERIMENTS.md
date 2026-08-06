@@ -19,7 +19,8 @@ Ordered by expected gain per GPU-hour. Rationale for the ordering is in
 
 | ID | Change | Lever | Cost | Status |
 | --- | --- | --- | --- | --- |
-| E003 | **Produce predicted geffs for the training samples** — stratified subset (6/embryo, 12 total), first pass via `biohub-validation-e003` | critical path | GPU | running |
+| E003 | **Produce predicted geffs for the training samples** — stratified subset (6/embryo, 12 total), via `biohub-validation-e003` | critical path | GPU | **done** — 12/12 geffs produced, ~24 min predict time (~2 min/sample, scales to ~6.6h for the full 199) |
+| E003-score | Score E003 predictions against real GT per embryo, via `biohub-score-e003` (kernel-chained onto E003's output) | unblocks 2/3/4 | CPU | running |
 | E005 | Node-budget sweep on real predictions — resolve the M009 question | 2 | CPU | blocked on E003 |
 | E006 | Division threshold sweep (`SAFE_DIV_FRAME_FRAC_CAP`, `SAFE_DIV_GLOBAL_FRAC_CAP`, geometry gates) | 3 | GPU | blocked on E003 |
 | E007 | Raise link aggressiveness, paid for from the node budget | 4 | GPU | blocked on E005 |
