@@ -136,12 +136,29 @@ edge_attrs = edge_attrs.filter(pl.col("_out_rank") <= 2)
 ```
 
 A node with three or more outgoing edges keeps **the two lowest edge IDs** — i.e. whichever two we
-happened to write first. Nothing about confidence enters. If our writer emits edges in arbitrary
-order, we are letting the metric discard good links at random.
+happened to write first. Nothing about confidence enters.
 
-**Fix: sort edges by descending confidence before assigning IDs.** Costless, and strictly
-non-negative in expectation. Same applies to the merge-collapse rule just above it, which keeps the
-lowest edge ID per matched GT edge pair.
+### Tested, and worth nothing on this pipeline (E004, 2026-08-04)
+
+The obvious fix — sort edges by descending confidence before assigning IDs — was implemented and
+submitted. **Public LB came back 0.913, identical to the baseline.** Predicted in advance; see the
+pre-registration in `experiments/EXPERIMENTS.md`.
+
+The rule is real, but it has a precondition this pipeline never meets:
+
+- Our added cap logged **zero** drops, and the baseline's own `run_stats.csv` reports
+  `dropped_multi_child_edges = 0` and `dropped_multi_parent_edges = 0` on every test sample.
+  `filter_output_graph` already enforces out-degree ≤ 2 upstream, so `_out_rank <= 2` can never fire.
+- The merge-collapse rule is likewise inert for scoring: among predicted edges collapsing onto the
+  *same* matched GT edge pair, whichever survives is a TP either way, so ID order cannot move TP/FP.
+
+**Lesson worth more than the points:** a rule found by reading the scorer is only exploitable if our
+own output actually violates it. Check the pipeline's existing behaviour against the rule before
+ranking it as a lever. This one was ranked "sign known" purely on the scorer's text.
+
+The property stays documented because it constrains any *future* change that raises out-degree — for
+example a more permissive division policy under lever 3. If we ever emit three children, the ordering
+fix becomes live again.
 
 ### 4. Only `t -> t+1` edges survive
 
@@ -172,18 +189,19 @@ division that is topologically right but whose daughters merge back is scored as
 
 Ranked by (expected gain) / (GPU hours), highest first:
 
-1. **Confidence-ordered edge IDs** — zero cost, removes a random-truncation loss (property 3). The
-   only item here whose sign is known in advance.
-2. **Node-budget sweep** on real predictions — no GPU. Size unknown and unresolvable without stage 3;
-   the mechanism is confirmed but the operating point is not (property 1).
-3. **Division precision/recall tuning** — the term is only 0.1-weighted but the gap we need is 0.034
+1. ~~**Confidence-ordered edge IDs**~~ — **tested, no-op** (E004, LB 0.913 unchanged). The pipeline
+   already satisfies the rule; see property 3.
+2. **Node-budget sweep** on real predictions — no GPU. Size unknown; the mechanism is confirmed but
+   the operating point is not (property 1).
+3. **Division precision/recall tuning** — the term is only 0.1-weighted but the gap we need is ~0.035
    (property 5).
 4. **Re-tuning link aggressiveness upward** now that FP is known to be nearly free in unannotated
    regions (property 2).
 5. Retraining detectors — most expensive, do last.
 
-Items 2–4 all now depend on the same missing input: predicted geffs for the training samples. That
-makes producing them the critical path, not any of the levers themselves.
+With lever 1 dead, **nothing remaining has a known sign**, and levers 2–4 all depend on the same
+missing input: predicted geffs for the training samples. Producing them is the critical path, and
+until they exist no lever can be evaluated at all.
 
 ## Validation constraint that governs all of it
 

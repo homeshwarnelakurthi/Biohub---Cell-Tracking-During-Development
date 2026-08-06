@@ -217,3 +217,28 @@ reports which version went through. General note: a 403 from this API is not rel
 authorisation failure — check for missing required-but-optional-looking parameters before assuming
 a permissions problem.
 
+---
+
+## M014 — Ranked a lever "sign known" from the scorer alone, without checking our own output
+**Date:** 2026-08-04, settled by E004
+**What happened.** Lever 1 (confidence-ordered edge ids) was called "the only item whose sign is
+known in advance" and run first, on the strength of reading `metrics.py`: the scorer truncates
+out-degree > 2 by keeping the two lowest edge ids, so write order was said to be discarding our best
+links. It went through a P100 failure (M012), a slug mix-up (M011) and a submit 403 (M013) to reach
+the leaderboard — and scored **0.913, exactly unchanged**.
+
+The rule is real. The precondition is not: the baseline's `filter_output_graph` already enforces
+out-degree <= 2, so `_out_rank <= 2` never fires. The evidence was sitting in the pipeline's own
+`run_stats.csv` as `dropped_multi_child_edges = 0`, which was in the output all along and would have
+settled it before any GPU time was spent.
+**Why.** The scorer was read carefully and our own pipeline was not. Finding an exploitable-looking
+rule felt like the hard part, so the cheap confirmation step — does our output actually violate it? —
+got skipped.
+**Change.** A lever is not ranked until its precondition is checked against our current output. For
+metric rules that means: find the statistic in `run_stats.csv`, or add one, showing we actually
+trigger the rule. Reading the scorer tells you what *could* matter; only the pipeline's behaviour
+tells you what *does*.
+
+Worth noting what went right: the prediction was pre-registered before submitting, so this came back
+as a clean confirmed negative rather than something to explain away afterwards. Keep doing that.
+

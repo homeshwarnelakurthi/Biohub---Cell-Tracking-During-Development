@@ -1,48 +1,54 @@
 # Strategy — 0.913 to the top of the board
 
-Last refreshed: 2026-08-03 (live Kaggle API pull).
+Last refreshed: 2026-08-04 (live Kaggle API pull).
 
 ## Where we actually stand
 
 | | |
 | --- | --- |
 | Team | `Homii_N` (`homeshwarrao`) |
-| Public LB | **0.913 — rank 200 / 1935 teams** |
-| Submissions used | 3 (0.143, 0.913, 0.913) |
-| #1 | 0.947 |
+| Public LB | **0.913 — rank 238 / 1935 teams** (was 200 on 2026-08-03) |
+| Submissions used | 4 (0.143, 0.913, 0.913, 0.913) |
+| #1 | 0.948 |
 | Prize cutoff (7th) | 0.933 |
 | Gap to prize | **+0.020** |
-| Gap to #1 | **+0.034** |
-| Final deadline | 2026-09-29 (57 days) |
+| Gap to #1 | **+0.035** |
+| Final deadline | 2026-09-29 (56 days) |
 | Team merger deadline | 2026-09-22 |
 | Budget | 5 submissions/day, 12h notebook runtime, no internet at scoring |
 
 ## The single most important fact
 
-**162 teams are tied at exactly 0.913**, spanning ranks 151–312. That is not a coincidence and it is
+**165 teams are tied at exactly 0.913**, spanning ranks 189–353. That is not a coincidence and it is
 not a plateau in the problem — it is the score of an unmodified public notebook. Our current
 submission is a fork of `pilkwang/biohub-cell-tracking-learned-graph-w-gap-recovery` running its
-default preset, so we are one of those 162.
+default preset, so we are one of those 165.
+
+The cluster is also *drifting downward*: the same 0.913 was rank 200 yesterday and is 238 today,
+because teams outside it keep improving. A tied score is not a stable position.
 
 Two consequences:
 
-1. Any genuine, non-cosmetic improvement moves us past ~150 teams immediately, because the
-   distribution above us is thin: 0.913 → 0.916 is rank 200 → ~50.
+1. Any genuine, non-cosmetic improvement moves us past ~180 teams immediately, because the
+   distribution above us is thin: 0.913 → 0.916 is rank 238 → ~50.
 2. Everyone in that band will be tuning the same knobs against the same public LB. The public
    leaderboard is 29% of the hidden test set; the private 71% decides the prizes. A field this
    compressed and this correlated is set up for a large shakeup, and robustness across embryos will
    decide it — not public-LB micro-tuning.
 
-## Score decomposition — where the 0.034 can come from
+## Score decomposition — where the 0.035 can come from
 
 `score = adj_edge_jaccard + 0.1 * division_jaccard`. Full derivation in
 [METRIC_ANALYSIS.md](METRIC_ANALYSIS.md). Four levers, ordered by expected gain per GPU-hour:
 
-### Lever 1 — confidence-ordered edge IDs (cost: ~0 GPU hours) — sign known
+### Lever 1 — confidence-ordered edge IDs — DEAD (tested 2026-08-04)
 
-The metric truncates out-degree > 2 by *edge ID*, keeping whichever two edges were written first.
-Sorting edges by descending confidence before writing converts a random loss into a chosen one.
-Implemented in `src/biocell/submission.py`. Strictly non-negative in expectation.
+Implemented, submitted, **LB 0.913 — unchanged**, exactly as pre-registered. The baseline already
+enforces out-degree <= 2 upstream, so the metric rule this targets never fires, and the
+merge-collapse rule cannot move TP/FP regardless of ordering. See METRIC_ANALYSIS property 3.
+
+Kept in `src/biocell/submission.py` because it becomes live again if a future change (a more
+permissive division policy under lever 3) ever emits three children.
 
 ### Lever 2 — node budget (cost: ~0 GPU hours, CPU sweep only) — SIZE UNRESOLVED
 The adjusted-Jaccard multiplier `(1 - 0.1 * (N_pred - N_true)/N_true)` is clamped only at the bottom,
@@ -58,7 +64,7 @@ nothing in TP, and are still charged against the node count. But the operating p
 without real predictions. **Treat as unresolved until stage 3 of the harness runs.**
 
 ### Lever 3 — divisions (cost: moderate)
-Only 0.1-weighted, but the gap we need is 0.034. Moving division Jaccard from ~0.25 to ~0.60 is worth
+Only 0.1-weighted, but the gap we need is 0.035. Moving division Jaccard from ~0.25 to ~0.60 is worth
 about that entire gap on its own. Divisions are rare, noisy, and consequently under-tuned by the
 field. The current pipeline gates them behind `SAFE_DIV_*` caps (`SAFE_DIV_FRAME_FRAC_CAP = 0.008`,
 `SAFE_DIV_GLOBAL_FRAC_CAP = 0.004`) that were tuned for precision; whether that trade is right is an
@@ -87,7 +93,7 @@ discipline that follows:
 - Prefer flat optima to sharp ones. `best_of()` in `node_budget.py` deliberately picks the least
   aggressive cut among near-ties for this reason.
 - Never tune a threshold on the public LB. With 5 submissions/day and 29% test coverage, that is
-  fitting noise, and it is precisely how the 162-team cluster got stuck.
+  fitting noise, and it is precisely how the tied cluster got stuck.
 
 ## Plan for the 57 days
 
@@ -95,9 +101,8 @@ discipline that follows:
 `adj_edge_jaccard`, `division_jaccard` and `total_node_ratio` *separately*, per embryo. Until we can
 see which term is costing us, every change is guesswork. This is the gate for everything else.
 
-**Phase 2 — free wins (days 7–14).** Lever 1 (sign known). Then produce predicted geffs for the
-training samples — this is the critical path, since levers 2–4 all depend on it — and resolve
-lever 2 against them.
+**Phase 2 — free wins (days 7–14).** Lever 1 tested and dead. The phase collapses to its second
+half: produce predicted geffs over the training set. Everything else is blocked on it.
 
 **Phase 3 — divisions (days 14–35).** Lever 3, then lever 4. This is where the prize-zone gap is.
 
@@ -109,7 +114,7 @@ variants of the same tuning — pick one aggressive and one robust.
 
 ## Selecting final submissions
 
-Kaggle scores the private LB on 71% of the test set that nobody has seen. With 162 teams tied and a
+Kaggle scores the private LB on 71% of the test set that nobody has seen. With 165 teams tied and a
 metric this sensitive to node counts, public rank is a poor predictor of private rank. Choose:
 
 - **Submission A** — best 2-fold CV score, regardless of public LB.
@@ -120,15 +125,18 @@ If A and B are the same configuration, deliberately weaken B until it isn't.
 
 ## Honest assessment of "position 1"
 
-First place is 0.947 against our 0.913, with 1935 teams and 57 days.
+First place is 0.948 against our 0.913, with 1935 teams and 56 days.
 
-Only lever 1 currently has a known sign, and it is small. Lever 2 was the thing that looked like a
-cheap large win, and measurement removed that claim rather than confirming it — its size is now
-genuinely unknown (MISTAKES M009). Levers 2, 3 and 4 all sit behind the same missing input: predicted
-geffs for the training samples. So the near-term risk is not that the ideas are wrong, it is that
-nothing is measurable until that input exists, and 57 days is not long.
+Both cheap levers are now gone. Lever 2 looked like a large win until measurement removed the claim
+(M009), and lever 1 was tested outright and scored exactly nothing (E004). Neither failure was
+expensive, but together they mean **no remaining lever has a known sign**, and levers 2, 3 and 4 all
+sit behind the same missing input: predicted geffs over the training set.
 
-Closing the full 0.034 to #1 requires lever 3 to work, and that is a research question, not an
+Meanwhile the field is moving. Our score has not changed since 29 July and our rank has drifted
+200 -> 238 on the same 0.913, because teams around us keep improving. Standing still is losing
+ground, and the gap to first has widened slightly rather than closed.
+
+Closing the full 0.035 to #1 requires lever 3 to work, and that is a research question, not an
 engineering certainty — the leaders are not standing still either. A realistic target is the prize
 zone (top 7, +0.020), with higher contingent on the division work landing. This estimate gets revised
 against measured CV, not restated as a goal.
