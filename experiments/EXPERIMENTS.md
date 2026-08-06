@@ -23,14 +23,17 @@ Ordered by expected gain per GPU-hour. Rationale for the ordering is in
 | E003-score | 2026-08-06 | Score E003 predictions (12 stratified train samples) against real GT, per embryo | 44b6: 0.9349 | 6bba: 0.9306 | n/a (measurement, not a change) | **done** | **division_jaccard = 0.0000 on BOTH folds** (0 TP / 18 FP / 7 FN across 25 events) — was a guess (~0.25), now measured and cross-fold-consistent. Node budget: both folds net-rewarded already (44b6 mult 1.031, 6bba mult 1.003), upside mostly banked. This is a baseline measurement of E000, not a lever test — no ship/no-ship verdict applies. |
 | E005 | 2026-08-06 | Root-cause the 0-TP division result — read `add_safe_divisions_postlink` and cross-check `run_stats.csv` | n/a | n/a | n/a (analysis, not a run) | **done** | `division_like_sources == safe_divisions_added` exactly on 12/12 samples: the base linker produces zero natural forks, every predicted division comes from this one late-stage heuristic. It attaches any unmatched orphan detection within a few µm of an existing single-child node as a second child — pure geometric proximity, no confidence or morphology check. Largest sample nearly saturates `SAFE_DIV_GLOBAL_FRAC_CAP` (159 added vs ~163 cap), meaning it wants to fire even more. |
 | E007 | 2026-08-06 | Disable `add_safe_divisions_postlink` (`BIOHUB_OUTPUT_SAFE_DIVISIONS=0`), same 12 samples, re-score | **44b6: 0.9374 (+0.0025)** | **6bba: 0.9308 (+0.0002)** | not yet submitted | **SHIP** (`biocell.cv.verdict()` confirmed) | division FP 18→0 on both folds; division_jaccard unchanged at 0.0 (TP still 0 — this removes noise, doesn't fix detection). Edge Jaccard +0.0023 on 44b6 (spurious edges had been touching annotated GT nodes), unchanged on 6bba (none of its removed edges were annotated-adjacent — its whole gain is from the node-budget multiplier ticking up). **Small, real, safe. Does not close the division gap by itself** — TP=0 is still unsolved. |
+| E010 | ILP `division_weight` 1.0 -> **0.4** (division accepted at `edge_prob > 0.30`) + safe-div off | 3 | GPU | running |
+| E011 | ILP `division_weight` 1.0 -> **0.6** (division accepted at `edge_prob > 0.50`) + safe-div off | 3 | GPU | running |
 | E006 | Node-budget per-sample tune on the 3 over-predicting samples | 2 | CPU | low priority |
 | E008 | Raise link aggressiveness, paid for from the node budget | 4 | GPU | low priority |
 | E009 | Detector retraining | 5 | GPU × many | last resort |
 
-**Critical path note.** E003 unblocked everything and immediately surfaced a concrete, measured
-problem: division detection produces zero true positives on 12 held-out samples. The bottleneck is no
-longer "no predictions to measure" — it's "diagnose why divisions fail" (E005), which needs to happen
-before any threshold sweep (E007) can be anything but guessing again.
+**Critical path note.** E003 unblocked everything and surfaced a measured problem: zero true-positive
+divisions. E005 traced 100% of predicted divisions to one geometric heuristic, and E007 removed it
+(shipped, both folds up). E010/E011 now attack the remaining half: the base ILP never proposes a
+division at all, because under `division_weight = 1.0` a division only beats a fresh track
+appearance when `edge_prob > 0.90` (see METRIC_ANALYSIS property 5). These sweep that bar down.
 
 ## Pre-registered predictions
 

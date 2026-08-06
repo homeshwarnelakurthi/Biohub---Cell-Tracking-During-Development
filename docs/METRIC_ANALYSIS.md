@@ -263,7 +263,48 @@ There is a compounding side effect: a component that "has a division" is exempte
 just adding wrong edges — it is actively rescuing noisy orphan detections from being pruned, by
 mislabelling them as division daughters.
 
-See MISTAKES.md for the fix tested against this diagnosis (E007) and its CV result. That makes it the clearest priority target this project has had so far.
+See MISTAKES.md for the fix tested against this diagnosis (E007) and its CV result.
+
+### Why the base linker never divides: the ILP arithmetic (E010, 2026-08-06)
+
+Removing the bad heuristic (E007) left division_jaccard at 0 because the underlying tracker never
+proposes a division at all. That is not a bug — it is what the configured ILP costs mathematically
+require.
+
+`ILPSolver` **minimises** total cost. The baseline configures:
+
+```
+edge_weight       = -1.0 * edge_prob     # a reward, in [-1, 0]
+division_weight   = +1.0                 # a penalty
+appearance_weight = +0.1                 # penalty for a track starting fresh
+```
+
+For a parent already linked to one child, a second daughter is either a **division**
+(cost `1.0 - edge_prob`) or just a **new track appearing** (cost `0.1`). The solver takes the cheaper
+one, so a division is only ever chosen when
+
+```
+1.0 - edge_prob < 0.1     ->     edge_prob > 0.90
+```
+
+**Divisions require a second-child edge probability above 0.90 under the default weights.** In
+practice nothing clears that bar, which is why `division_like_sources` is exactly 0 once the
+heuristic is off. It is not a detection failure or a threshold that needs nudging — it is the
+objective function declining to ever pay for a division.
+
+`division_weight` moves that bar directly: the division is preferred when
+`edge_prob > division_weight - appearance_weight`.
+
+| `division_weight` | division accepted when |
+| --- | --- |
+| 1.0 (baseline) | `edge_prob > 0.90` |
+| 0.6 | `edge_prob > 0.50` |
+| 0.4 | `edge_prob > 0.30` |
+
+Being explicit about the risk: lowering it far enough will start producing divisions, but nothing
+here guarantees they are the *right* ones — too low and every confident edge pair forks, trading a
+0-TP/0-FP state for a 0-TP/many-FP one, which is strictly worse. E010 (0.4) and E011 (0.6) test this
+on the same 12 samples, and `biocell.cv.verdict()` decides on both folds as usual. That makes it the clearest priority target this project has had so far.
 
 ---
 

@@ -182,19 +182,41 @@ REPLACEMENT_B = """        # --- BIOCELL PATCH E003b: save the final predicted g
 
 ANCHOR_C = ANCHOR_A  # same insertion point as Patch A - both must run before CONFIG cell
 
-REPLACEMENT_C = """# --- BIOCELL PATCH E007c: disable add_safe_divisions_postlink ---
-# See docs/METRIC_ANALYSIS.md property 5 and docs/MISTAKES.md for the evidence.
-os.environ["BIOHUB_OUTPUT_SAFE_DIVISIONS"] = "0"
-print("E007: BIOHUB_OUTPUT_SAFE_DIVISIONS -> 0 (heuristic disabled)")
-# --- END BIOCELL PATCH E007c ---
 
-"""
+def _env_override_block(env: dict[str, str]) -> str:
+    """Emit an os.environ block that runs before the CONFIG cell reads any override.
+
+    The baseline reads every tunable through os.environ.get(...) at CONFIG time, so
+    setting them here is equivalent to changing the constants, without touching 138k
+    characters of upstream code.
+    """
+    lines = ["# --- BIOCELL PATCH E00Xc: config overrides via the baseline's own env vars ---"]
+    for key, value in env.items():
+        lines.append(f'os.environ["{key}"] = "{value}"')
+        lines.append(f'print("BIOCELL override: {key} -> {value}")')
+    lines.append("# --- END BIOCELL PATCH E00Xc ---")
+    lines.append("")
+    lines.append("")
+    return "\n".join(lines)
 
 
-def apply_patches(nb: dict, samples_per_embryo: int, disable_safe_divisions: bool) -> dict:
+def apply_patches(
+    nb: dict,
+    samples_per_embryo: int,
+    disable_safe_divisions: bool,
+    env: dict[str, str] | None = None,
+) -> dict:
     replacement_a = REPLACEMENT_A_TEMPLATE.format(samples_per_embryo=samples_per_embryo)
+
+    overrides: dict[str, str] = {}
     if disable_safe_divisions:
-        replacement_a = REPLACEMENT_C + replacement_a
+        # See docs/METRIC_ANALYSIS.md property 5: this heuristic supplied 100% of the
+        # baseline's divisions at 0% precision (E005/E007).
+        overrides["BIOHUB_OUTPUT_SAFE_DIVISIONS"] = "0"
+    overrides.update(env or {})
+
+    if overrides:
+        replacement_a = _env_override_block(overrides) + replacement_a
     patches = [
         ("A: stratified TRAIN subset via BIOHUB_TEST_DIR", ANCHOR_A, replacement_a),
         ("B: save predicted graph as .geff", ANCHOR_B, REPLACEMENT_B),
@@ -228,7 +250,8 @@ def apply_patches(nb: dict, samples_per_embryo: int, disable_safe_divisions: boo
     return nb
 
 
-def build(samples_per_embryo: int, slug: str, title: str, disable_safe_divisions: bool) -> Path:
+def build(samples_per_embryo: int, slug: str, title: str, disable_safe_divisions: bool,
+          env: dict[str, str] | None = None) -> Path:
     if slugify(title) != slug:
         raise SystemExit(f"title {title!r} slugifies to {slugify(title)!r}, not {slug!r}")
 
@@ -236,7 +259,7 @@ def build(samples_per_embryo: int, slug: str, title: str, disable_safe_divisions
         raise SystemExit(f"baseline not found: {BASELINE}")
     nb = json.loads(BASELINE.read_text(encoding="utf-8"))
     print(f"baseline: {BASELINE.name} ({len(nb['cells'])} cells)")
-    nb = apply_patches(nb, samples_per_embryo, disable_safe_divisions)
+    nb = apply_patches(nb, samples_per_embryo, disable_safe_divisions, env)
 
     out_dir = REPO / "notebooks" / slug.replace("biohub-", "", 1)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -254,6 +277,8 @@ def build(samples_per_embryo: int, slug: str, title: str, disable_safe_divisions
     print(f"  machine_shape: {machine_shape}")
     print(f"  samples_per_embryo: {samples_per_embryo}")
     print(f"  disable_safe_divisions: {disable_safe_divisions}")
+    if env:
+        print(f"  env overrides: {env}")
 
     meta = {
         "id": f"{username}/{slug}",
@@ -291,9 +316,22 @@ def main() -> int:
     p.add_argument("--title", default=DEFAULT_TITLE)
     p.add_argument("--disable-safe-divisions", action="store_true",
                     help="E007: disable add_safe_divisions_postlink (see docs/MISTAKES.md)")
+    p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
+                    help="override any BIOHUB_* config var the baseline reads from os.environ; "
+                         "repeatable, e.g. --env BIOHUB_ILP_DIVISION_WEIGHT=0.4")
     args = p.parse_args()
 
-    out_dir = build(args.samples_per_embryo, args.slug, args.title, args.disable_safe_divisions)
+    env: dict[str, str] = {}
+    for item in args.env:
+        if "=" not in item:
+            raise SystemExit(f"--env expects KEY=VALUE, got {item!r}")
+        key, value = item.split("=", 1)
+        if not key.startswith("BIOHUB_"):
+            raise SystemExit(f"--env key {key!r} does not start with BIOHUB_ - likely a typo")
+        env[key] = value
+
+    out_dir = build(args.samples_per_embryo, args.slug, args.title,
+                    args.disable_safe_divisions, env)
 
     if args.push:
         from kaggle.api.kaggle_api_extended import KaggleApi
