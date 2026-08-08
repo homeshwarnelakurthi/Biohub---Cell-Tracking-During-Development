@@ -121,6 +121,13 @@ distribution differs from CV in a way worth understanding.
 **v3 submission (recorded 2026-08-06, before submitting).** Predicted public LB: **sign genuinely
 uncertain**, most likely a small move in either direction, roughly 0.905-0.918.
 
+**RESULT: 0.914 — a new best, and the first score this project has moved off 0.913.** The "> 0.913"
+branch below is the one that happened: the 155 ILP-proposed divisions add real true positives on
+unseen data rather than net false positives. The division lever transfers, and it is worth pushing
+further. Note the gain (+0.001) is far smaller than CV suggested (+0.0255 on `6bba`), which is
+consistent with M015 — CV overstates division work, but does not invert its sign the way it did for
+removals.
+
 I am not claiming a direction, and the reason is specific rather than hedging. Division Jaccard is
 `TP / (TP + FP + FN)`, so the 155 added divisions are *not* free: every one that is wrong and lands
 on annotated ground truth enlarges the denominator and pushes the term **down**. v1 already earns
