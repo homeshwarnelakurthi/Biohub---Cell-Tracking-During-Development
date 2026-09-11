@@ -97,6 +97,26 @@ holdout validator - so the validator scores the change for free. That does not r
 holdout is still drawn from the distribution the weights were fit on), but it gives a directly
 comparable base-vs-patched number from one harness.
 
+**LF-v020 RESULT: 0.947** - higher than the 0.939 the notebook declared. Rank 1361 -> **209 / 3378**,
+tied with 157 teams, gap to prize now **+0.011** (was +0.044).
+
+**LF-v021 RESULT: confirmed no-op, and not submitted.** The patch logged
+`ILP divisions restored: 0 (skipped, target already had a parent: 0)` on all 72 sample-runs - both
+counters zero, so the loop never even found a source with two ILP children. Its validator reproduces
+v020 exactly (base PROXY_SCORE 0.9490, divisions 3 TP / 1 FP / 9 FN), so v021 is functionally
+identical to v020 and submitting it would spend a slot to re-measure 0.947.
+
+The cause is arithmetic, not a bug in the patch. v020 sets
+`ILP_DIVISION_WEIGHT = 1.2` and `ILP_APPEARANCE_WEIGHT = 0.0`. The solver minimises cost, so a
+division costs `1.2 - edge_prob` against `0.0` for letting the daughter start a fresh track, and a
+division only wins when `edge_prob > 1.2`. Probabilities cap at 1.0, so **v020's ILP cannot propose a
+division at all** - its division machinery is dead code as configured, and every one of its 3 true
+positives comes from the geometric `add_safe_divisions_postlink` heuristic.
+
+That is the same cost comparison derived in August (METRIC_ANALYSIS property 5); v020's settings just
+push it from "hard" to "impossible". Our patch is correct and does nothing here because there is
+nothing to restore.
+
 **Pre-registered for LF-v021 (recorded before the run finished).** Expect division recall to rise off
 3 TP with FP staying low, since the no-existing-parent guard doubled as a precision filter in E013
 (it removed 4 FP without costing a TP). Expect the validator to *overstate* the LB gain, per M015 -
