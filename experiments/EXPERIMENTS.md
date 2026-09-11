@@ -75,6 +75,35 @@ second child **only where the ILP proposed a division**, rather than where a lef
 happens to be nearby. That replaces `add_safe_divisions_postlink`'s geometric proximity — measured at
 0% precision in E005 — with a learned signal measured to produce real true positives.
 
+### Lineage Forge era, 2026-09-10 onward
+
+Five weeks idle left us at rank 1361/3358 on a stale 0.914 while the field moved hard: top
+0.949 -> 0.970, prize cutoff 0.935 -> 0.958. Adopted `biohub-lf-dctta-v020.ipynb` (public 0.939
+declared) as the new base after checking it carries no metric exploit.
+
+| ID | Change | LB | Notes |
+| --- | --- | --- | --- |
+| LF-v020 | Adopt Lineage Forge base unmodified | pending | Re-run reproduced the original output exactly (241,356 rows). Dual-seed ensemble, bidirectional harmonic fusion, DeepCenter TTA, built-in 8-sample holdout validator, automatic post-process sweep. |
+| LF-v021 | v020 + restore ILP-proposed divisions (our E013 patch) | pending | +64 lines, 0 removed, one hunk inside `filter_output_graph`. Targets the base's 9 FN divisions. |
+
+**Why v021 targets divisions specifically.** v020's own validator reports divisions at
+3 TP / 1 FP / 9 FN - precision is already near-perfect, the loss is pure recall, ~75% missed. It
+still calls `motion_relink_edges` with scipy `linear_sum_assignment`, the strict 1:1 Hungarian match
+we showed in E011/E012 cannot express a division and which discards the ILP solution outright. So the
+same structural cause we diagnosed in August is present in a 0.939 pipeline, and the same fix applies.
+
+The patch sits inside `filter_output_graph`, which v020 calls from both the submission loop and its
+holdout validator - so the validator scores the change for free. That does not repair M015 (the
+holdout is still drawn from the distribution the weights were fit on), but it gives a directly
+comparable base-vs-patched number from one harness.
+
+**Pre-registered for LF-v021 (recorded before the run finished).** Expect division recall to rise off
+3 TP with FP staying low, since the no-existing-parent guard doubled as a precision filter in E013
+(it removed 4 FP without costing a TP). Expect the validator to *overstate* the LB gain, per M015 -
+E013 predicted +0.0255 on a fold and delivered +0.001 real. Sign trustworthy, magnitude not. A result
+at or below v020 would mean the ILP divisions this pipeline proposes are lower quality than the old
+baseline's, which would be worth knowing before spending more on the division line.
+
 ## Pre-registered predictions
 
 Written before the result is known, so the finding cannot be rationalised afterwards.
