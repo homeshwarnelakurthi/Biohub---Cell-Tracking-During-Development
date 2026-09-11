@@ -144,31 +144,143 @@ REPLACEMENT = (
 )
 
 
-def build(slug: str, title: str, strip_outputs: bool = True) -> Path:
+# ---------------------------------------------------------------------------
+# Division sweep (--division-sweep)
+#
+# v020's holdout reports divisions at 3 TP / 1 FP / 9 FN. Since
+# division_jaccard = TP/(TP+FP+FN), a false positive and a false negative cost
+# exactly the same - so sitting at 1 FP against 9 FN means the filters are
+# spending precision we do not need and starving on recall. Break-even is about
+# one recovered division per four new false positives; 3 recovered at 1:1 is
+# worth +0.014 score, 6 is worth +0.024.
+#
+# The filters are demonstrably where the loss is. On one sample v020 logs
+# geometric_candidates=172 with deepcenter_rejected=108 and
+# divergence_rejected=535, and cap_skipped=0 - so the caps are not binding, the
+# filters are. Yet the notebook's own sweep tries 7 candidates and not one of
+# them touches a SAFE_DIV_* or DeepCenter division parameter, despite 8 of its
+# 20 sweepable keys being exactly those.
+#
+# Directions verified by reading the rejection code, not assumed:
+#   * DEEPCENTER_SAFE_DIV_THRESHOLD - candidate rejected when score < threshold,
+#     so LOWER is looser.
+#   * SAFE_DIV_DIVERGE_UM - requires grandchild_dist - sister_dist >= the value
+#     (and both daughters to have a tracked successor at t+2), so LOWER is looser.
+#   * SAFE_DIV_SISTER_SYMMETRY_TAU / caps - LOWER tau and HIGHER caps are looser.
+#
+# The caps are included as explicit combos rather than left to the notebook's
+# automatic combo step: at current settings they do not bind, so they would score
+# neutral individually and be dropped from the positive set - then start binding
+# once the filters loosen, silently capping the gain.
+# ---------------------------------------------------------------------------
+
+SWEEP_ANCHOR = '''PP_CANDIDATES: dict[str, dict] = {
+    "gap45": {"GAP_CLOSE_UM": 4.5},
+    "tight55": {"MOTION_RELINK_TIGHT_UM": 5.5},
+    "relaxed9": {"MOTION_RELINK_RELAXED_UM": 9.0},
+    "bonus125": {"MOTION_RELINK_LEARNED_BONUS": 1.25},
+    "gap2step40": {"GAP2_MAX_STEP_UM": 4.0},
+    "reuse28": {"GAP_CLOSE_REUSE_UM": 2.8},
+    "dcgap035": {"DEEPCENTER_GAP_THRESHOLD": 0.35},
+}'''
+
+SWEEP_REPLACEMENT = '''PP_CANDIDATES: dict[str, dict] = {
+    # --- original candidates, kept so the base sweep result stays comparable ---
+    "tight55": {"MOTION_RELINK_TIGHT_UM": 5.5},
+    "dcgap035": {"DEEPCENTER_GAP_THRESHOLD": 0.35},
+
+    # --- BIOCELL: division-recall candidates -------------------------------
+    # Holdout is 3 TP / 1 FP / 9 FN and the metric weighs FP and FN equally, so
+    # trading precision for recall is favourable down to ~1 TP per 4 FP.
+    "dcdiv010": {"DEEPCENTER_SAFE_DIV_THRESHOLD": 0.10},
+    "dcdiv005": {"DEEPCENTER_SAFE_DIV_THRESHOLD": 0.05},
+    "diverge150": {"SAFE_DIV_DIVERGE_UM": 1.50},
+    "diverge100": {"SAFE_DIV_DIVERGE_UM": 1.00},
+    "symtau050": {"SAFE_DIV_SISTER_SYMMETRY_TAU": 0.50},
+    # caps raised alongside the filters - individually neutral today (cap_skipped=0),
+    # but they begin to bind as soon as the filters let more candidates through.
+    "loose_caps": {"SAFE_DIV_FRAME_FRAC_CAP": 0.0120,
+                   "SAFE_DIV_GLOBAL_FRAC_CAP": 0.0060},
+    "loose_div_mild": {"DEEPCENTER_SAFE_DIV_THRESHOLD": 0.10,
+                       "SAFE_DIV_DIVERGE_UM": 1.50,
+                       "SAFE_DIV_FRAME_FRAC_CAP": 0.0120,
+                       "SAFE_DIV_GLOBAL_FRAC_CAP": 0.0060},
+    "loose_div_strong": {"DEEPCENTER_SAFE_DIV_THRESHOLD": 0.05,
+                         "SAFE_DIV_DIVERGE_UM": 1.00,
+                         "SAFE_DIV_SISTER_SYMMETRY_TAU": 0.50,
+                         "SAFE_DIV_FRAME_FRAC_CAP": 0.0120,
+                         "SAFE_DIV_GLOBAL_FRAC_CAP": 0.0060},
+}'''
+
+# Env overrides applied in cell 0 alongside the sweep patch.
+#   PPSWEEP_MAX_ADJ_LOSS - v020 vetoes any candidate losing >0.0005 adjusted edge
+#     Jaccard. A division gain of +0.014 is worth far more than that, so the
+#     guardrail as set would reject exactly the trade we are testing. Raised to
+#     0.003: enough to permit the trade, tight enough that edge quality cannot
+#     quietly collapse the way it did in E012.
+#   VALIDATOR_N_PER_TYPE - 4 gives 8 held-out samples and only ~13 division
+#     events, which is thin for tuning a rare event; we already made that mistake
+#     at n=7 in August (see E013/E014). 6 gives ~12 samples and ~20 events.
+SWEEP_ENV = {
+    "BIOHUB_PPSWEEP_MAX_ADJ_LOSS": "0.003",
+    "BIOHUB_VALIDATOR_N_PER_TYPE": "6",
+}
+
+ENV_ANCHOR = 'os.environ["BIOHUB_DEEPCENTER_TTA"] = "1"'
+
+
+def _env_block(env: dict) -> str:
+    lines = ['os.environ["BIOHUB_DEEPCENTER_TTA"] = "1"',
+             "",
+             "# --- BIOCELL: division-sweep overrides ---"]
+    for k, v in env.items():
+        lines.append(f'os.environ["{k}"] = "{v}"')
+        lines.append(f'print("BIOCELL override: {k} -> {v}")')
+    lines.append("# --- END BIOCELL ---")
+    return "\n".join(lines)
+
+
+def build(slug: str, title: str, strip_outputs: bool = True,
+          ilp_divisions: bool = True, division_sweep: bool = False) -> Path:
     if slugify(title) != slug:
         raise SystemExit(f"title {title!r} slugifies to {slugify(title)!r}, not {slug!r}")
     if not BASE_NB.exists():
         raise SystemExit(f"base notebook not found: {BASE_NB}")
 
+    patches: list[tuple[str, str, str]] = []
+    if ilp_divisions:
+        patches.append(("restore ILP-proposed divisions", ANCHOR, REPLACEMENT))
+    if division_sweep:
+        patches.append(("expand sweep with division candidates", SWEEP_ANCHOR, SWEEP_REPLACEMENT))
+        patches.append(("sweep env overrides", ENV_ANCHOR, _env_block(SWEEP_ENV)))
+    if not patches:
+        raise SystemExit("nothing to do: pass --ilp-divisions and/or --division-sweep")
+
     nb = json.loads(BASE_NB.read_text(encoding="utf-8"))
-    applied = 0
+    applied = {name: 0 for name, _, _ in patches}
     for cell in nb["cells"]:
         if cell["cell_type"] != "code":
             continue
         src = "".join(cell["source"])
-        n = src.count(ANCHOR)
-        if n == 0:
-            continue
-        if n > 1:
-            raise SystemExit(f"anchor found {n} times, expected 1")
-        cell["source"] = src.replace(ANCHOR, REPLACEMENT).splitlines(keepends=True)
-        applied += 1
-    if applied != 1:
-        raise SystemExit(
-            f"patch applied {applied} times, expected exactly 1 - "
-            "the base notebook changed and the anchor needs updating"
-        )
-    print("  applied: restore ILP-proposed divisions (inside filter_output_graph)")
+        changed = False
+        for name, anchor, replacement in patches:
+            n = src.count(anchor)
+            if n == 0:
+                continue
+            if n > 1:
+                raise SystemExit(f"patch {name!r}: anchor found {n} times, expected 1")
+            src = src.replace(anchor, replacement)
+            applied[name] += 1
+            changed = True
+        if changed:
+            cell["source"] = src.splitlines(keepends=True)
+    for name, count in applied.items():
+        if count != 1:
+            raise SystemExit(
+                f"patch {name!r} applied {count} times, expected exactly 1 - "
+                "the base notebook changed and the anchor needs updating"
+            )
+        print(f"  applied: {name}")
 
     if strip_outputs:
         for c in nb["cells"]:
@@ -209,9 +321,15 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--slug", default="biohub-lineage-forge-v021-ilpdiv")
     p.add_argument("--title", default="Biohub Lineage Forge V021 Ilpdiv")
+    p.add_argument("--no-ilp-divisions", action="store_true",
+                    help="omit the ILP division patch (to isolate the sweep)")
+    p.add_argument("--division-sweep", action="store_true",
+                    help="expand the post-process sweep with division-recall candidates")
     args = p.parse_args()
 
-    out_dir = build(args.slug, args.title)
+    out_dir = build(args.slug, args.title,
+                    ilp_divisions=not args.no_ilp_divisions,
+                    division_sweep=args.division_sweep)
 
     if args.push:
         from kaggle.api.kaggle_api_extended import KaggleApi
