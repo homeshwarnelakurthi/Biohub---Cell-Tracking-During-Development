@@ -286,3 +286,28 @@ were given. The flaw is that the data is not held out from the *model*, only fro
 The pre-registration is what made this legible: the prediction was written down before submitting,
 so the divergence was unmissable rather than something to rationalise afterwards. Keep doing that.
 
+---
+
+## M016 — Recommended longer-trained weights while M015 was already on the books
+**Date:** 2026-09-12, exposed by LF-v023 scoring 0.941 against v020's 0.947
+**What happened.** I recommended the public 350-epoch primary weights as "the highest-value, lowest-risk
+move available", reasoning that it was "not an algorithm change" so none of the failure modes that had
+cost us runs could apply. The notebook's own validator agreed emphatically: base proxy 0.9490 -> 0.9646,
+and ~0.972 after its sweep. The leaderboard came back at 0.941, a 0.006 regression.
+
+**Why.** M015, logged four weeks earlier, says our validation is drawn from the distribution the model
+weights were fit on, so it systematically overstates anything that benefits from that fit. A checkpoint
+trained seven times longer on the same two training embryos is the purest possible case of that - it
+buys better fit to exactly the samples the validator holds out, and the hidden test set is a third
+embryo. I applied M015 to post-processing heuristics and never asked whether it applied to the weights
+themselves. "Not an algorithm change" was true and irrelevant; the risk was never in the algorithm.
+
+**Change.**
+1. **The built-in validator is not evidence for any change that alters model fit** - weights, epochs,
+   detection thresholds. For those it is expected to be biased in favour of the change, so a validator
+   gain is not a reason to submit and a large one is a warning sign.
+2. A rule's scope includes its most obvious instance. When a mistake is logged, check which *upcoming*
+   decisions it covers before making them, not only the kind that produced it.
+3. Changes below ~0.001 on the public LB are noise (LF-v022 scored 0.946 with a submission byte-identical
+   to v020's 0.947), so a model-level change needs to clear roughly 0.002 before it is worth believing.
+

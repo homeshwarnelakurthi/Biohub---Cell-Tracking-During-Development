@@ -162,6 +162,33 @@ Widening the holdout was worth it independently: at 8 samples the base read 3 TP
 (div_J 0.2308); at 12 samples it reads 5/7/13 (div_J 0.2000). The smaller sample was optimistic, and
 the whole loosening argument rested on that optimistic 1 FP.
 
+### LF-v022 and LF-v023 leaderboard results, 2026-09-12
+
+| submission | change vs v020 | validator (8-sample base) | public LB |
+| --- | --- | --- | --- |
+| LF-v020 (x2) | — | 0.9490 | **0.947, 0.947** |
+| LF-v022 | division sweep, same selected config | (12-sample, not comparable) | 0.946 |
+| LF-v023 | 350-epoch primary weights | **0.9646** (+0.0156) | **0.941** (-0.006) |
+
+**v022 is noise, not a regression.** Its visible-test `submission.csv` is byte-identical to v020's
+(same SHA256, 100% of node rows and 0 differing edges), and it selected the same `tight55` config.
+Code-competition scores come from a hidden-set rerun and are shown to three decimals, so a 0.001
+difference on identical visible output is either rounding of a sub-0.001 difference or rerun
+nondeterminism. **Practical noise floor: changes of ~0.001 on the public LB are indistinguishable.**
+
+**v023 is a real regression, and a clean M015 confirmation with the sign inverted.** The validator
+said the 350-epoch weights were better by +0.0156 at base and ~+0.023 after the sweep; the leaderboard
+says -0.006. On the held-out training samples v023 detects more cells (node ratio 0.905 -> 0.990) and
+wins edge Jaccard on 5 of 8 samples. On the four visible test samples it emits 11% more nodes, with one
+sample jumping from 20,729 to 34,907 (+68%).
+
+The 350-epoch checkpoint is seven times more training on the two training embryos. The validator
+holds out samples from those same embryos, so it rewards exactly that extra fit; the hidden test set
+is a different embryo and punishes it. The sweep then compounded it by auto-selecting a three-way combo
+(`tight55+dcgap035+relaxed9`) on the inflated signal - `relaxed9` had *lost* on v020's validator.
+
+v020 (50-epoch weights) remains the best real score at 0.947.
+
 ## Pre-registered predictions
 
 Written before the result is known, so the finding cannot be rationalised afterwards.
