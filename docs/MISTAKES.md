@@ -311,3 +311,24 @@ themselves. "Not an algorithm change" was true and irrelevant; the risk was neve
 3. Changes below ~0.001 on the public LB are noise (LF-v022 scored 0.946 with a submission byte-identical
    to v020's 0.947), so a model-level change needs to clear roughly 0.002 before it is worth believing.
 
+
+---
+
+## M017 — Read division conclusions off a validator that implements the retired metric
+**Date:** 2026-09-12, found while surveying public notebooks
+**What happened.** The v022 sweep write-up concluded the division filters were "correctly tuned",
+using the Lineage Forge notebook's built-in validator. Its `compute_division_confusion` still scores
+divisions with the weakly-connected-component reachability rule the organisers removed on 2026-07-17
+(commit aa65e90). The public 0.948 notebook carries the same function under a comment claiming it
+reflects the patch. megayak's audit measured it reading division Jaccard roughly 2x high.
+
+**Why.** I checked that the validator used the right *formula* (adjusted edge Jaccard + 0.1 x division
+Jaccard) and never checked its division *matching rule* against the current upstream source. A
+comment saying "reflects the post-exploit patch" was taken as fact.
+
+**Change.**
+1. Division numbers come only from the organisers' `division_metrics.py`, imported unmodified
+   (`src/biocell/official_score.py`), never from a reimplementation inside a borrowed notebook.
+2. The v022 "filters correctly tuned" conclusion is withdrawn as unsupported, not reversed.
+3. When adopting someone else's evaluation code, diff it against upstream before reading any number
+   from it - the same standard as adopting their pipeline.

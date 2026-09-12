@@ -1,0 +1,20 @@
+{
+ "id": "homeshwarrao/biohub-divlab-948",
+ "title": "Biohub Divlab 948",
+ "code_file": "biohub-divlab-948.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": "true",
+ "enable_gpu": "true",
+ "machine_shape": "NvidiaTeslaT4",
+ "enable_internet": "false",
+ "competition_sources": [
+  "biohub-cell-tracking-during-development"
+ ],
+ "dataset_sources": [
+  "pilkwang/biohub-deepcenter-unet3d-center-prior-v1",
+  "pilkwang/biohub-temporal-unet3d-seed314159-v1",
+  "pilkwang/biohub-tracking-support-pack-50ep-v1"
+ ],
+ "kernel_sources": []
+}

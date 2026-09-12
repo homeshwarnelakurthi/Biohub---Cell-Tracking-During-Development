@@ -266,3 +266,40 @@ Outcomes and what each would mean:
 - The **decomposed** metric terms. A score that moved without a term moving is a measurement bug.
 - If it was submitted: the LB delta, and whether it matched the CV prediction. Divergence between CV
   and LB is itself a finding and belongs in MISTAKES.md.
+
+---
+
+# Public-code survey and the division lab (2026-09-12)
+
+## Survey findings
+Read the leaderboard-relevant public notebooks (index of 369 with title scores). What matters:
+
+1. **0.963-0.966 notebooks are not reproducible.** They exploited the weakly-connected-component
+   division rule patched 2026-07-17; their scores stand but cannot be re-earned. The reproducible
+   public frontier is ~0.948 (`rishabhr0y/biohub-948-sew20`).
+2. **The 0.948 notebook has fewer features than our 0.947 base**, not more: no DeepCenter TTA, no
+   sister-symmetry gate, no validator-driven sweep; tighter safe-division caps (parent 7.0 / sister
+   12.0 um vs 9.0 / 14.0), gap close 5.8 vs 5.0, DeepCenter `checkpoint_last.pt`, safe-div DC
+   threshold 0.12.
+3. **Both notebooks' validators use the retired division rule** (M017).
+4. **Safe-division ranking prefers duplicates.** `score = parent_dist + 0.15 * sister_dist`, sorted
+   ascending, fills the small per-frame budget with the tightest pairs - typically two detections of
+   one cell - while real sisters sit ~10 um apart (megayak's GT audit: 35 of 151 GT divisions
+   reachable under shipped gates). Opening the gates with this ranker hurt (0.9508 -> 0.9341); a
+   better ranker with open gates has not been tested publicly.
+5. **Knob landscape is flat.** busyaprime's 328 LB-scored versions show most single-knob changes
+   within +/-0.001, our noise floor. Config mixing between the 0.947 and 0.948 lines cannot reach the
+   prize line (0.959).
+
+## Plan
+- **A948** (`homeshwarrao/biohub-a948-base`): the 0.948 notebook verbatim. Reference + small real gain.
+- **DIVLAB** (`homeshwarrao/biohub-divlab-948`): 0.948 pipeline on 40 held-out TRAIN clips, recording
+  the graph entering `add_safe_divisions_postlink` plus a DeepCenter score per node. Not a submission.
+- Locally, `src/biocell/replay948.py` lifts the notebook's post-division tail verbatim by AST and must
+  reproduce the kernel's final graphs exactly before any variant is read.
+  `experiments/divlab/divlab.py` then (a) labels every candidate proposal against GT, (b) replays
+  ranker/gate variants, scoring with the official metric per embryo.
+- Only variants that improve division Jaccard on **both** embryos without costing adjusted edge
+  Jaccard go to a GPU run. M015 still applies: TRAIN clips were seen by the weights, so the
+  expected bias is fewer duplicates than on test - which, if anything, understates a duplicate-aware
+  ranker.
