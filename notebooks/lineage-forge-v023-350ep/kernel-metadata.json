@@ -1,0 +1,21 @@
+{
+ "id": "homeshwarrao/biohub-lineage-forge-v023-350ep",
+ "title": "Biohub Lineage Forge V023 350ep",
+ "code_file": "biohub-lineage-forge-v023-350ep.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": "true",
+ "enable_gpu": "true",
+ "machine_shape": "NvidiaTeslaT4",
+ "enable_internet": "false",
+ "competition_sources": [
+  "biohub-cell-tracking-during-development"
+ ],
+ "dataset_sources": [
+  "pilkwang/biohub-deepcenter-unet3d-center-prior-v1",
+  "pilkwang/biohub-temporal-unet3d-seed314159-v1",
+  "shehailrs/biohub-tracking-350ep-public-weight-snapshot",
+  "pilkwang/biohub-tracking-support-pack-50ep-v1"
+ ],
+ "kernel_sources": []
+}
