@@ -124,6 +124,44 @@ E013 predicted +0.0255 on a fold and delivered +0.001 real. Sign trustworthy, ma
 at or below v020 would mean the ILP divisions this pipeline proposes are lower quality than the old
 baseline's, which would be worth knowing before spending more on the division line.
 
+### LF-v022 division sweep: hypothesis refuted, 2026-09-12
+
+Expanded the post-process sweep with 8 division-recall candidates on the argument that
+`division_jaccard = TP/(TP+FP+FN)` weighs FP and FN equally, so a base sitting at low FP against high
+FN should profit from loosening - break-even around one recovered division per four new false
+positives.
+
+**It did not.** Loosening lost on essentially every axis:
+
+| config | proxy | delta | div_J | TP/FP/FN |
+| --- | --- | --- | --- | --- |
+| **tight55** (relink, not division) | **0.9406** | **+0.0031** | 0.2083 | 5/6/13 |
+| dcdiv005 | 0.9386 | +0.0010 | 0.2083 | 5/6/13 |
+| dcdiv010 | 0.9385 | +0.0009 | 0.2083 | 5/6/13 |
+| base | 0.9375 | — | 0.2000 | 5/7/13 |
+| diverge100 | 0.9368 | -0.0008 | 0.1875 | 6/14/12 |
+| diverge150 | 0.9348 | -0.0028 | 0.1724 | 5/11/13 |
+| loose_div_mild | 0.9343 | -0.0032 | 0.1667 | 5/12/13 |
+| symtau050 | 0.9338 | -0.0037 | 0.1667 | 4/6/14 |
+| loose_div_strong | 0.9329 | -0.0046 | 0.1515 | 5/15/13 |
+
+The break-even arithmetic was right; the assumed exchange rate was wrong. `diverge100` was the only
+candidate to buy a true positive at all, and it cost **7 false positives** for it - well past the 1:4
+break-even. `loose_div_strong` added 8 FP and no TP. `symtau050` actually *lost* a true positive.
+
+**Conclusion: v020's division filters are not over-tuned for precision, they are correctly tuned.**
+The 13 false negatives are not divisions being wrongly rejected - they are divisions the geometric
+candidate generator never proposes, so no amount of filter loosening can reach them. Recovering them
+needs a different *candidate source*, not a looser gate.
+
+The sweep's winner, `tight55`, is a motion-relink parameter and is the same config v020 already
+selected, so v022's `submission.csv` is byte-identical in size (241,356 rows) and should score the
+same 0.947.
+
+Widening the holdout was worth it independently: at 8 samples the base read 3 TP / 1 FP / 9 FN
+(div_J 0.2308); at 12 samples it reads 5/7/13 (div_J 0.2000). The smaller sample was optimistic, and
+the whole loosening argument rested on that optimistic 1 FP.
+
 ## Pre-registered predictions
 
 Written before the result is known, so the finding cannot be rationalised afterwards.
