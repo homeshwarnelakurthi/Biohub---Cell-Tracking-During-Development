@@ -342,3 +342,9 @@ the lab variant on all 40 clips.
 optimistic (M015) and the test embryo's division geometry may differ; 0.1 x division term only.
 Predicted public LB **0.948-0.953**; below 0.947 means the ranker does not transfer across embryos
 beyond these two and the division term is not the right lever for the remaining time.
+
+**Reclaim ("stolen daughter") repair - refuted.** Reassigning a daughter from a single-child neighbour
+to the candidate parent, ranked by a separate logistic (18 positives among 55k visible proposals;
+coefficients changed sign between folds). Every threshold lost on both embryos: best ALL 0.9129
+(logit >= 3) vs 0.9205 without reclaim; 44b6 fell to 0.909-0.911. Dropped. The 21 stolen divisions
+would need a signal we do not have in the snapshot features, most likely from the image.
