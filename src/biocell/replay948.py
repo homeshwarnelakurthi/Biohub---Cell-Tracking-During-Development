@@ -34,12 +34,12 @@ def _code_cells(nb_path: Path) -> list[str]:
     return ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
 
 
-def build_namespace(env_overrides: dict[str, str] | None = None) -> dict:
+def build_namespace(env_overrides: dict[str, str] | None = None, nb_path: Path | None = None) -> dict:
     """Namespace holding the notebook's config constants and tail functions."""
     import numpy as np
     from scipy.spatial import cKDTree
 
-    cells = _code_cells(BASE_NB)
+    cells = _code_cells(nb_path or BASE_NB)
     saved = dict(os.environ)
     try:
         # Cell 0: env assignments only.
@@ -50,7 +50,8 @@ def build_namespace(env_overrides: dict[str, str] | None = None) -> dict:
         for k, v in (env_overrides or {}).items():
             os.environ[k] = str(v)
 
-        ns: dict = {"os": os, "np": np, "cKDTree": cKDTree, "Path": Path, "json": json}
+        import math
+        ns: dict = {"os": os, "np": np, "math": math, "cKDTree": cKDTree, "Path": Path, "json": json}
         # Upper-case constants from every cell, evaluated in order; skip anything that
         # needs runtime state (artifact paths, torch, ...).
         for src in cells[1:]:
@@ -114,6 +115,7 @@ def install_dc_lookup(ns: dict, snap: dict) -> None:
         return True
 
     ns["deepcenter_accept_repair_point"] = deepcenter_accept_repair_point
+    ns["deepcenter_score_point"] = lambda dataset, t, point, *a, **k: by_point.get((int(t), tuple(point)))
     ns["_dc_by_node"] = {int(k): v for k, v in snap["dc_scores"].items()}
 
 

@@ -78,6 +78,8 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
         existing = {(int(e["source_id"]), int(e["target_id"])) for e in edges}
         global_cap = max(1, int(round(max(1, len(edges)) * p["global_cap"])))
         added, used_t, used_s = [], set(), set()
+        removed: set[tuple[int, int]] = set()
+        steal = bool(p.get("steal"))
 
         for t in sorted(ids_by_t):
             child_ids = ids_by_t.get(t + 1, [])
@@ -85,9 +87,16 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
                 continue
             source_ids = [n for n in ids_by_t[t] if len(out_by_source.get(n, [])) == 1]
             cand_ids = [n for n in child_ids if n not in incoming and n not in used_t]
-            if not source_ids or not cand_ids:
+            pool_ids = cand_ids
+            if steal:
+                # Also daughters currently owned by a single-child parent ("thief").
+                pool_ids = [n for n in child_ids if n not in used_t and (
+                    n not in incoming or (len(out_by_source.get(pred_of[n], [])) == 1 and pred_of[n] not in used_s))]
+            if not source_ids or not pool_ids:
                 continue
-            tree = cKDTree(np.stack([_position_um(nodes_by_id[c]) for c in cand_ids])) if p["mutual_nn"] else None
+            tree = (cKDTree(np.stack([_position_um(nodes_by_id[c]) for c in cand_ids]))
+                    if (p["mutual_nn"] and cand_ids) else None)
+            pool_tree = cKDTree(np.stack([_position_um(nodes_by_id[c]) for c in pool_ids]))
             frame_cap = max(1, int(round(len(source_ids) * p["frame_cap"])))
             props = []
             for sid in source_ids:
@@ -103,9 +112,12 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
                 if tree is not None:
                     _, k = tree.query(_position_um(child))
                     nn_id = cand_ids[int(k)]
-                for qid in cand_ids:
+                # Ball query keeps pool order (sorted indices), so ties resolve as in the notebook.
+                for k_ in sorted(pool_tree.query_ball_point(_position_um(src), p["parent_max"] + 1e-6)):
+                    qid = pool_ids[k_]
                     if (sid, qid) in existing:
                         continue
+                    stolen = qid in incoming
                     q = nodes_by_id[qid]
                     pd_ = edge_distance_um(src, q)
                     if pd_ > p["parent_max"]:
@@ -113,7 +125,7 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
                     sd = edge_distance_um(child, q)
                     if sd > p["sister_max"]:
                         continue
-                    if p["mutual_nn"] and qid != nn_id:
+                    if not stolen and p["mutual_nn"] and qid != nn_id:
                         continue
                     div = float("nan")
                     c1, q1 = out_by_source.get(cid, []), out_by_source.get(qid, [])
@@ -128,7 +140,9 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
                     if p["dc_thr"] is not None and dq is not None and dq < p["dc_thr"]:
                         continue
                     f = {
-                        "t": t, "source": sid, "child": cid, "cand": qid,
+                        "t": t, "source": sid, "child": cid, "cand": qid, "stolen": int(stolen),
+                        "thief_dist": edge_distance_um(nodes_by_id[pred_of[qid]], q) if stolen else float("nan"),
+                        "thief_back": back_len(pred_of[qid], pred_of) if stolen else 0,
                         "parent_dist": pd_, "sister_dist": sd, "child_dist": child_dist, "diverge": div,
                         "dc_cand": dq if dq is not None else float("nan"),
                         "dc_child": dc.get(cid, float("nan")),
@@ -139,7 +153,19 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
                     }
                     if f["cand_len"] < p.get("min_cand_len", 0) or f["child_len"] < p.get("min_child_len", 0):
                         continue
-                    props.append((p["rank"](f), f))
+                    if stolen:
+                        if p.get("steal_rank") is None:  # feature collection only
+                            if collect is not None:
+                                collect.append(f)
+                            continue
+                        key = p["steal_rank"](f)
+                        if p.get("steal_min_rank") is not None and key > p["steal_min_rank"]:
+                            continue
+                    else:
+                        key = p["rank"](f)
+                        if p.get("min_rank") is not None and key > p["min_rank"]:
+                            continue
+                    props.append((key, f))
             if collect is not None:
                 collect.extend(f for _, f in props)
             props.sort(key=lambda x: x[0])
@@ -147,7 +173,15 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
             for _, f in props:
                 if len(added) >= global_cap or n_frame >= frame_cap:
                     break
-                if f["cand"] in used_t or f["cand"] in incoming or f["source"] in used_s:
+                if f["cand"] in used_t or f["source"] in used_s:
+                    continue
+                if f["stolen"]:
+                    th = pred_of.get(f["cand"])
+                    if th is None or th in used_s or th == f["source"]:
+                        continue
+                    removed.add((th, f["cand"]))
+                    used_s.add(th)
+                elif f["cand"] in incoming:
                     continue
                 added.append({"source_id": f["source"], "target_id": f["cand"], "edge_prob": None,
                               "distance_um": f["parent_dist"], "safe_division": 1})
@@ -155,6 +189,9 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
                 used_s.add(f["source"])
                 n_frame += 1
         stats["safe_divisions_added"] = len(added)
+        stats["safe_divisions_reclaimed"] = len(removed)
+        if removed:
+            edges = [e for e in edges if (int(e["source_id"]), int(e["target_id"])) not in removed]
         return [*edges, *added] if added else edges
 
     return fn
@@ -169,6 +206,56 @@ def baseline_params(ns: dict) -> dict:
         "frame_cap": ns["SAFE_DIV_FRAME_FRAC_CAP"], "global_cap": ns["SAFE_DIV_GLOBAL_FRAC_CAP"],
         "rank": lambda f: f["parent_dist"] + 0.15 * f["sister_dist"],
     }
+
+
+# --------------------------------------------------------------------------- learned ranker
+FEATS = ["parent_dist", "child_dist", "diverge", "dc_cand", "child_prob", "cand_len", "sister_dist"]
+FEATS_STEAL = FEATS + ["thief_dist", "thief_back"]
+
+
+def _fx(f: dict, feats: list[str] = FEATS) -> list[float]:
+    out = []
+    for k in feats:
+        x = float(f[k])
+        if x != x:
+            x = -3.0 if k == "diverge" else (0.85 if k == "child_prob" else 0.22)
+        out.append(x)
+    return out
+
+
+def fit_logit(rows: list[dict], l2: float = 1.0, feats: list[str] = FEATS) -> dict:
+    X = np.array([_fx(r, feats) for r in rows]); y = np.array([int(r["label"]) for r in rows])
+    mu, sd = X.mean(0), X.std(0) + 1e-9
+    Z = (X - mu) / sd
+    w = np.zeros(Z.shape[1]); b = 0.0
+    sw = np.where(y == 1, (len(y) - y.sum()) / max(y.sum(), 1), 1.0)
+    for _ in range(3000):
+        p = 1 / (1 + np.exp(-(Z @ w + b))); g = (p - y) * sw
+        w -= 0.1 * (Z.T @ g / len(y) + l2 * w / len(y)); b -= 0.1 * g.mean()
+    # express in raw units: logit = c0 + sum(c_i * x_i)
+    c = w / sd
+    return {"feats": feats, "coef": c.tolist(), "intercept": float(b - (c * mu).sum())}
+
+
+def logit_of(model: dict, f: dict) -> float:
+    return model["intercept"] + sum(c * x for c, x in zip(model["coef"], _fx(f, model["feats"])))
+
+
+def task_fit() -> None:
+    import json
+    rows = [r for r in csv.DictReader(open(OUT / "proposals.csv"))
+            if r["label"] == "1" or r["src_gt_has_child"] == "1"]
+    orphan = [r for r in rows if r.get("stolen", "0") == "0"]
+    stolen = [r for r in rows if r.get("stolen", "0") == "1"]
+    print(f"orphan rows {len(orphan)} ({sum(r['label'] == '1' for r in orphan)} pos), "
+          f"stolen rows {len(stolen)} ({sum(r['label'] == '1' for r in stolen)} pos)")
+    models = {"ALL": fit_logit(orphan), "steal_ALL": fit_logit(stolen, feats=FEATS_STEAL)}
+    for e in sorted({r["embryo"] for r in rows}):
+        models[f"not_{e}"] = fit_logit([r for r in orphan if r["embryo"] != e])
+        models[f"steal_not_{e}"] = fit_logit([r for r in stolen if r["embryo"] != e], feats=FEATS_STEAL)
+    (OUT / "ranker_models.json").write_text(json.dumps(models, indent=1))
+    for k, m in models.items():
+        print(k, {f: round(c, 3) for f, c in zip(m["feats"], m["coef"])}, "b", round(m["intercept"], 2))
 
 
 # --------------------------------------------------------------------------- tasks
@@ -203,7 +290,7 @@ def task_features(stem: str) -> list[dict]:
     p = baseline_params(ns)
     # Wide-open pool so the labels describe what a better ranker could choose from.
     p.update(parent_max=12.0, sister_max=18.0, child_max=12.0, mutual_nn=False, diverge=None, dc_thr=None,
-             frame_cap=1.0, global_cap=1.0)
+             frame_cap=1.0, global_cap=1.0, steal=True)
     rows: list[dict] = []
     fn = make_safe_div(ns, p, collect=rows)
     fn(dict(snap["nodes_by_id"]), list(snap["edges"]), ns["_fresh_stats"]())
@@ -220,6 +307,8 @@ def task_features(stem: str) -> list[dict]:
         kids = gt_succ.get(gs, set()) if gs is not None else set()
         r["label"] = int(len(kids) >= 2 and gc in kids and gq in kids and gc != gq)
         r["gt_src_divides"] = int(len(kids) >= 2)
+        r["src_matched"] = int(gs is not None)
+        r["src_gt_has_child"] = int(gs is not None and len(kids) >= 1)
         r["cand_matched"] = int(gq is not None)
         r["cand_dup_of_child"] = int(gq is not None and gq == gc)
         r["stem"], r["embryo"] = stem, stem.split("_")[0]
@@ -233,18 +322,48 @@ def run_variant(stem: str, name: str, overrides: dict, rank_name: str) -> dict:
     R.install_dc_lookup(ns, snap)
     p = baseline_params(ns)
     p.update(overrides)
-    p["rank"] = RANKERS[rank_name]
+    if rank_name.startswith("logit"):
+        import json
+        models = json.loads((OUT / "ranker_models.json").read_text())
+        model = models[f"not_{stem.split('_')[0]}"] if rank_name == "logit_loeo" else models["ALL"]
+        min_logit = p.pop("min_logit", None)
+        p["rank"] = lambda f, m=model: -logit_of(m, f)
+        if min_logit is not None:
+            p["min_rank"] = -min_logit
+        steal_min = p.pop("steal_min_logit", None)
+        if steal_min is not None:
+            sm = models[f"steal_not_{stem.split('_')[0]}"] if rank_name == "logit_loeo" else models["steal_ALL"]
+            p["steal"] = True
+            p["steal_rank"] = lambda f, m=sm: -logit_of(m, f)
+            p["steal_min_rank"] = -steal_min
+    else:
+        p["rank"] = RANKERS[rank_name]
     nodes, edges, stats = R.replay(snap, ns, safe_div_fn=make_safe_div(ns, p))
     row = O.score_sample(nodes, edges, gt_path(stem))
-    row.update(stem=stem, embryo=stem.split("_")[0], variant=name, safe_divs=stats["safe_divisions_added"])
+    row.update(stem=stem, embryo=stem.split("_")[0], variant=name, safe_divs=stats["safe_divisions_added"],
+               reclaimed=stats.get("safe_divisions_reclaimed", 0))
     return row
 
 
 RANKERS = {
     "baseline": lambda f: f["parent_dist"] + 0.15 * f["sister_dist"],
 }
+OPEN = dict(parent_max=10.0, sister_max=16.0, child_max=12.0, mutual_nn=False, diverge=None, dc_thr=None)
 VARIANTS: dict[str, tuple[dict, str]] = {
     "baseline": ({}, "baseline"),
+    "logit_gated": ({}, "logit_loeo"),
+    "logit_open": (OPEN, "logit_loeo"),
+    "logit_open_cap2x": ({**OPEN, "frame_cap": 0.0152, "global_cap": 0.0075}, "logit_loeo"),
+    "logit_open_min0": ({**OPEN, "min_logit": 0.0}, "logit_loeo"),
+    "logit_open_min1": ({**OPEN, "min_logit": 1.0}, "logit_loeo"),
+    "logit_open_min2": ({**OPEN, "min_logit": 2.0}, "logit_loeo"),
+    "logit_open_min1_cap2x": ({**OPEN, "min_logit": 1.0, "frame_cap": 0.0152, "global_cap": 0.0075}, "logit_loeo"),
+    "open_baseline_key": (OPEN, "baseline"),
+    "min1_steal0": ({**OPEN, "min_logit": 1.0, "steal_min_logit": 0.0}, "logit_loeo"),
+    "min1_steal1": ({**OPEN, "min_logit": 1.0, "steal_min_logit": 1.0}, "logit_loeo"),
+    "min1_steal2": ({**OPEN, "min_logit": 1.0, "steal_min_logit": 2.0}, "logit_loeo"),
+    "min1_steal3": ({**OPEN, "min_logit": 1.0, "steal_min_logit": 3.0}, "logit_loeo"),
+    "min2_steal2": ({**OPEN, "min_logit": 2.0, "steal_min_logit": 2.0}, "logit_loeo"),
 }
 
 
@@ -262,6 +381,8 @@ def main() -> int:
     if cmd == "check":
         for stem, verbatim, mine in _pool(task_check, [(s,) for s in ss]):
             print(f"  {stem:<28} verbatim={verbatim} param-copy={mine}")
+    elif cmd == "fit":
+        task_fit()
     elif cmd == "features":
         rows = [r for rs in _pool(task_features, [(s,) for s in ss]) for r in rs]
         with open(OUT / "proposals.csv", "w", newline="") as fh:

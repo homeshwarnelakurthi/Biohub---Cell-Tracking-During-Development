@@ -42,12 +42,76 @@ DATASET_SOURCES = [
     "pilkwang/biohub-tracking-support-pack-50ep-v1",
 ]
 
+ENV_ANCHOR = 'os.environ["BIOHUB_DIAGNOSTIC_ARM"] = "harmonic_association_production"\n'
+
 BUILDS = {
     "a948": ("biohub-a948-base", "Biohub A948 Base"),
     "divlab": ("biohub-divlab-948", "Biohub Divlab 948"),
+    "b948rank": ("biohub-b948-divranker", "Biohub B948 Divranker"),
 }
 
-ENV_ANCHOR = 'os.environ["BIOHUB_DIAGNOSTIC_ARM"] = "harmonic_association_production"\n'
+# ---------------------------------------------------------------- B: learned division ranker
+# Fitted in experiments/divlab (logistic, class-balanced, L2) on 1,830 visible proposals from
+# 40 held-out TRAIN clips; out-of-embryo AUC 0.94 / 0.92 vs 0.83 / 0.75 for the geometry key.
+# Replay with the official metric: 0.9131 -> 0.9205, both embryos up, adj edge unchanged.
+RANK_FEATS = ["parent_dist", "child_dist", "diverge", "dc_cand", "child_prob", "cand_len", "sister_dist"]
+RANK_COEF = [-0.9703509247805392, -0.09628048557646245, 0.7818970761788142, 10.857929519457635,
+             -11.203000230078873, 0.06786271600491933, 0.6585136810199136]
+RANK_INTERCEPT = 5.1009634010053215
+RANK_MIN_LOGIT = 1.0
+
+RANK_ENV = ENV_ANCHOR + (
+    "# B948: learned division ranker replaces the geometric gates it was trained without\n"
+    'os.environ["BIOHUB_SAFE_DIV_MAX_UM"] = "10.0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_SISTER_MAX_UM"] = "16.0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_EXISTING_CHILD_MAX_UM"] = "12.0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_REQUIRE_MUTUAL_NN"] = "0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_REQUIRE_DIVERGENCE"] = "0"\n'
+)
+# The guard in cell 1 pins these exact values; B deliberately changes them.
+ENV_REMOVE = [
+    'os.environ["BIOHUB_SAFE_DIV_MAX_UM"] = "7.0"\n',
+    'os.environ["BIOHUB_SAFE_DIV_SISTER_MAX_UM"] = "12.0"\n',
+    'os.environ["BIOHUB_SAFE_DIV_EXISTING_CHILD_MAX_UM"] = "10.0"\n',
+]
+
+RANK_BLOCK_START = "                # PATCH: forward divergence."
+RANK_BLOCK_END = "                proposals.append((score, source_id, candidate_id, parent_dist, sister_dist))\n"
+RANK_BLOCK = f'''                # B948 learned ranker. Features mirror experiments/divlab/divlab.py exactly.
+                _rk_div = float("nan")
+                _rk_c1 = out_by_source.get(existing_child_id, [])
+                _rk_q1 = out_by_source.get(candidate_id, [])
+                if len(_rk_c1) == 1 and len(_rk_q1) == 1:
+                    _rk_g1 = nodes_by_id.get(int(_rk_c1[0]["target_id"]))
+                    _rk_g2 = nodes_by_id.get(int(_rk_q1[0]["target_id"]))
+                    if (_rk_g1 is not None and _rk_g2 is not None
+                            and int(_rk_g1["t"]) == t + 2 and int(_rk_g2["t"]) == t + 2):
+                        _rk_div = edge_distance_um(_rk_g1, _rk_g2) - sister_dist
+                stats["safe_division_geometric_candidates"] += 1
+                _rk_dc = None
+                if USE_DEEPCENTER_VETO and deepcenter_bundle is not None and dataset is not None:
+                    _rk_dc = deepcenter_score_point(dataset, int(candidate["t"]), node_point(candidate),
+                                                    deepcenter_bundle, frame_cache, deepcenter_cache)
+                _rk_len, _rk_cur = 1, candidate_id
+                while _rk_len < 12:
+                    _rk_next = out_by_source.get(_rk_cur, [])
+                    if len(_rk_next) != 1:
+                        break
+                    _rk_cur = int(_rk_next[0]["target_id"])
+                    _rk_len += 1
+                _rk_prob = float(existing_child_edge.get("edge_prob") or float("nan"))
+                _rk_x = [parent_dist, child_dist, _rk_div, _rk_dc if _rk_dc is not None else float("nan"),
+                         _rk_prob, float(_rk_len), sister_dist]
+                _rk_fill = [0.22, 0.22, -3.0, 0.22, 0.85, 0.22, 0.22]
+                _rk_x = [f if x != x else x for x, f in zip(_rk_x, _rk_fill)]
+                _rk_logit = {RANK_INTERCEPT!r} + sum(c * x for c, x in zip({RANK_COEF!r}, _rk_x))
+                if _rk_logit < {RANK_MIN_LOGIT!r}:
+                    stats["safe_division_divergence_rejected"] += 1
+                    continue
+                score = -_rk_logit
+                proposals.append((score, source_id, candidate_id, parent_dist, sister_dist))
+'''
+
 DIVLAB_ENV = ENV_ANCHOR + (
     "# divlab: a large held-out slice so division statistics are not a handful of events\n"
     'os.environ["BIOHUB_VALIDATOR_N_PER_TYPE"] = "20"\n'
@@ -170,6 +234,29 @@ def _code_cell(src: str) -> dict:
             "source": src.splitlines(keepends=True)}
 
 
+def apply_ranker(nb: dict) -> None:
+    codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    env = [c for c in codes if ENV_ANCHOR in "".join(c["source"])]
+    assert len(env) == 1
+    src = "".join(env[0]["source"])
+    for line in ENV_REMOVE:
+        assert src.count(line) == 1, line
+        src = src.replace(line, "")
+    assert src.count(ENV_ANCHOR) == 1
+    env[0]["source"] = src.replace(ENV_ANCHOR, RANK_ENV).splitlines(keepends=True)
+
+    cells = [c for c in codes if RANK_BLOCK_START in "".join(c["source"])]
+    assert len(cells) == 1, f"ranker anchor in {len(cells)} cells"
+    src = "".join(cells[0]["source"])
+    assert src.count(RANK_BLOCK_START) == 1 and src.count(RANK_BLOCK_END) == 1
+    a = src.index(RANK_BLOCK_START)
+    b = src.index(RANK_BLOCK_END) + len(RANK_BLOCK_END)
+    old = src[a:b]
+    assert "score = parent_dist + 0.15 * sister_dist" in old and "DEEPCENTER_SAFE_DIV_THRESHOLD" in old
+    cells[0]["source"] = (src[:a] + RANK_BLOCK + src[b:]).splitlines(keepends=True)
+    print("  applied: ranker env (gates opened), learned ranker block")
+
+
 def build(kind: str) -> Path:
     slug, title = BUILDS[kind]
     assert slugify(title) == slug, (title, slug)
@@ -189,6 +276,9 @@ def build(kind: str) -> Path:
         nb["cells"].insert(idx[0] + 1, _code_cell(EXPORT_CELL))
         nb["cells"].insert(idx[0], _code_cell(RECORDER_CELL))
         print("  applied: validator N=20, recorder cell, export cell")
+
+    if kind == "b948rank":
+        apply_ranker(nb)
 
     for c in nb["cells"]:
         if c["cell_type"] == "code":

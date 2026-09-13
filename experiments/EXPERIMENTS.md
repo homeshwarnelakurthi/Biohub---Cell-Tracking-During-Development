@@ -303,3 +303,42 @@ Read the leaderboard-relevant public notebooks (index of 369 with title scores).
   Jaccard go to a GPU run. M015 still applies: TRAIN clips were seen by the weights, so the
   expected bias is fewer duplicates than on test - which, if anything, understates a duplicate-aware
   ranker.
+
+## DIVLAB results (2026-09-12)
+Replay reproduces all 40 kernel graphs exactly (verbatim AST lift and the parameterised copy).
+40 held-out TRAIN clips, 60 GT divisions, official metric throughout.
+
+**Why divisions are missed** (state entering safe-division repair): 22 reachable (second daughter
+is an orphan), 21 "stolen" (second daughter linked from an *unannotated* neighbouring track, 21/21),
+15 one daughter undetected, 2 other. Of 1,969 safe divisions the baseline adds, only 49 are visible
+to the metric (11 TP / 38 FP); the rest sit on unannotated cells.
+
+**What separates real from visible-false proposals** (medians, pos vs neg): divergence 3.6 vs 0.2 um,
+DeepCenter at candidate 0.37 vs 0.22, existing-child step 4.0 vs 2.3 um, existing-edge prob 0.76 vs
+0.90. Sister distance does not separate them.
+
+**Learned ranker** (7-feature logistic): out-of-embryo AUC 0.94 (44b6) / 0.92 (6bba) vs 0.83 / 0.75
+for `parent_dist + 0.15*sister_dist`. Sweep, weights always fitted on the *other* embryo:
+
+| variant | 44b6 | 6bba | ALL | div TP/FP/FN |
+|---|---|---|---|---|
+| baseline | 0.9257 | 0.9088 | 0.9131 | 11/38/49 |
+| open gates, old key | 0.9197 | 0.8981 | 0.9044 | 6/91/54 |
+| learned, shipped gates | 0.9296 | 0.9086 | 0.9148 | 13/40/47 |
+| learned, open gates | 0.9238 | 0.9064 | 0.9111 | 15/80/45 |
+| learned, open, logit >= 0 | 0.9291 | 0.9125 | 0.9167 | 20/69/40 |
+| **learned, open, logit >= 1** | **0.9306** | **0.9177** | **0.9205** | 21/53/39 |
+| learned, open, logit >= 2 | 0.9335 | 0.9151 | 0.9199 | 17/36/43 |
+| learned, open, logit >= 1, caps x2 | 0.9300 | 0.9135 | 0.9177 | 21/68/39 |
+
+megayak's result reproduces (opening gates with the old key hurts). The ranker is the lever; a
+confidence floor is needed with it. Adjusted edge Jaccard is unchanged in every learned variant.
+
+**B948** (`homeshwarrao/biohub-b948-divranker`): 0.948 base + learned ranker (weights fitted on
+both embryos) + logit >= 1 + open gates. The patched notebook function is verified identical to
+the lab variant on all 40 clips.
+
+**Pre-registration.** Replay gain +0.007. Expected LB shrinkage: division labels on TRAIN are
+optimistic (M015) and the test embryo's division geometry may differ; 0.1 x division term only.
+Predicted public LB **0.948-0.953**; below 0.947 means the ranker does not transfer across embryos
+beyond these two and the division term is not the right lever for the remaining time.
