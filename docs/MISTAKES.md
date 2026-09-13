@@ -332,3 +332,24 @@ comment saying "reflects the post-exploit patch" was taken as fact.
 2. The v022 "filters correctly tuned" conclusion is withdrawn as unsupported, not reversed.
 3. When adopting someone else's evaluation code, diff it against upstream before reading any number
    from it - the same standard as adopting their pipeline.
+
+---
+
+## M018 — Took a score in a notebook's title as a measured result
+**Date:** 2026-09-13, exposed by A948 scoring 0.935
+**What happened.** I adopted `rishabhr0y/biohub-948-sew20` as "the reproducible 0.948 frontier" and
+built the division lab on it. Run verbatim under our account it scored **0.935**, 0.012 below our own
+v020 (0.947). Neither it nor the identically configured `cloudssdut/...-0-948-reproduction` shows a
+verified score on its page; "948" was a title. I had even noted that this notebook had *fewer*
+features than v020 and scored higher - which should have been a reason to doubt the number, not
+a curiosity.
+
+**Why.** The survey index recorded title scores, and I let the label stand in for evidence. The same
+error as M017 in a different place: a claim inside someone else's artifact treated as fact.
+
+**Change.**
+1. A public notebook's score counts only if we have run it ourselves or its page shows a verified
+   public score. Title numbers are claims.
+2. When a notebook looks simpler than ours and reportedly scores higher, verify before building on it.
+3. Research built on it (DIVLAB) is not wasted - the ranker's mechanism is pipeline-level - but it
+   must be refit and re-verified on the base we actually ship (divlab-v020) before it is trusted.
