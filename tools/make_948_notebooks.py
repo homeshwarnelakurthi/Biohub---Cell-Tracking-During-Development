@@ -35,6 +35,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 BASE_NB = REPO / "bases" / "biohub-948-sew20.ipynb"
+V020_NB = REPO / "biohub-lf-dctta-v020.ipynb"
 COMPETITION = "biohub-cell-tracking-during-development"
 DATASET_SOURCES = [
     "pilkwang/biohub-deepcenter-unet3d-center-prior-v1",
@@ -48,7 +49,19 @@ BUILDS = {
     "a948": ("biohub-a948-base", "Biohub A948 Base"),
     "divlab": ("biohub-divlab-948", "Biohub Divlab 948"),
     "b948rank": ("biohub-b948-divranker", "Biohub B948 Divranker"),
+    "divlab020": ("biohub-divlab-v020", "Biohub Divlab V020"),
 }
+
+# v020 (our real 0.947). Its validator sweep selected tight55 in the scored run; the lab fixes that
+# setting and removes the sweep so snapshots describe exactly one, known configuration.
+V020_ENV = ENV_ANCHOR + (
+    "# divlab020: the configuration v020's sweep selected in its 0.947 run, fixed; no sweep\n"
+    'os.environ["BIOHUB_MOTION_RELINK_TIGHT_UM"] = "5.5"\n'
+    'os.environ["BIOHUB_VALIDATOR_N_PER_TYPE"] = "20"\n'
+)
+V020_SWEEP_START = "PP_CANDIDATES: dict[str, dict] = {\n"
+V020_SWEEP_END = '    "dcgap035": {"DEEPCENTER_GAP_THRESHOLD": 0.35},\n}\n'
+V020_VALIDATOR_MARKER = "LOCAL VALIDATOR -- base configuration"
 
 # ---------------------------------------------------------------- B: learned division ranker
 # Fitted in experiments/divlab (logistic, class-balanced, L2) on 1,830 visible proposals from
@@ -257,10 +270,39 @@ def apply_ranker(nb: dict) -> None:
     print("  applied: ranker env (gates opened), learned ranker block")
 
 
+def apply_divlab020(nb: dict) -> None:
+    codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    env = [c for c in codes if ENV_ANCHOR in "".join(c["source"])]
+    assert len(env) == 1, len(env)
+    src = "".join(env[0]["source"])
+    assert src.count(ENV_ANCHOR) == 1 and "BIOHUB_VALIDATOR_N_PER_TYPE" in src
+    old_n = 'os.environ["BIOHUB_VALIDATOR_N_PER_TYPE"] = "4"\n'
+    assert src.count(old_n) == 1
+    src = src.replace(old_n, "")
+    env[0]["source"] = src.replace(ENV_ANCHOR, V020_ENV).splitlines(keepends=True)
+
+    sweep = [c for c in codes if V020_SWEEP_START in "".join(c["source"])]
+    assert len(sweep) == 1
+    src = "".join(sweep[0]["source"])
+    a = src.index(V020_SWEEP_START)
+    b = src.index(V020_SWEEP_END) + len(V020_SWEEP_END)
+    sweep[0]["source"] = (src[:a] + "PP_CANDIDATES: dict[str, dict] = {}  # divlab020: sweep removed\n"
+                          + src[b:]).splitlines(keepends=True)
+
+    idx = [i for i, c in enumerate(nb["cells"])
+           if c["cell_type"] == "code" and V020_VALIDATOR_MARKER in "".join(c["source"])]
+    assert len(idx) == 1
+    nb["cells"].append(_code_cell(EXPORT_CELL))
+    nb["cells"].insert(idx[0], _code_cell(RECORDER_CELL))
+    print("  applied: fixed tight55, validator N=20, sweep removed, recorder + export cells")
+
+
 def build(kind: str) -> Path:
     slug, title = BUILDS[kind]
     assert slugify(title) == slug, (title, slug)
-    nb = json.loads(BASE_NB.read_text(encoding="utf-8"))
+    nb = json.loads((V020_NB if kind == "divlab020" else BASE_NB).read_text(encoding="utf-8"))
+    if kind == "divlab020":
+        apply_divlab020(nb)
 
     if kind == "divlab":
         codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
