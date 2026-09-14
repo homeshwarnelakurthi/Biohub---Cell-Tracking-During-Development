@@ -32,3 +32,4 @@ Thumbs.db
 # Research dumps (regenerate with experiments/divlab/divlab.py features)
 experiments/divlab/**/proposals.csv
 __pycache__/
+experiments/divlab/data*/
