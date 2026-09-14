@@ -348,3 +348,38 @@ to the candidate parent, ranked by a separate logistic (18 positives among 55k v
 coefficients changed sign between folds). Every threshold lost on both embryos: best ALL 0.9129
 (logit >= 3) vs 0.9205 without reclaim; 44b6 fell to 0.909-0.911. Dropped. The 21 stolen divisions
 would need a signal we do not have in the snapshot features, most likely from the image.
+
+## A948 scored 0.935 (M018) and the ranker redone on v020 (2026-09-14)
+A948, the "0.948" public notebook run verbatim, scored **0.935** on the leaderboard. The number was
+a title, never verified (M018). v020 (0.947) stays the base. DIVLAB was rerun on v020
+(`homeshwarrao/biohub-divlab-v020`: tight55 fixed as selected in the 0.947 run, sweep off, same
+40 clips); replay reproduces 40/40 exactly.
+
+v020's own gates (symmetry 0.6, DeepCenter 0.20, divergence 2.25) already remove most duplicates:
+baseline division Jaccard 0.143 vs 0.112 on the 0.948 pipeline. Refit ranker, weights from the
+other embryo, official metric:
+
+| variant | 44b6 | 6bba | ALL | div TP/FP/FN |
+|---|---|---|---|---|
+| v020 baseline | 0.9328 | 0.9078 | 0.9151 | 12/24/48 |
+| learned, v020 gates kept | 0.9152 all | | | 12/23/48 |
+| learned, gates kept + logit >= 1 | 0.9319 | 0.9115 | 0.9169 | 15/34/45 |
+| learned, open, logit >= 1 | 0.9308 | 0.9125 | 0.9173 | 18/48/42 |
+| learned, open, logit >= 2 | 0.9322 | 0.9128 | 0.9179 | 15/29/45 |
+| **learned, open, logit >= 3** | **0.9339** | **0.9171** | **0.9213** | 15/13/45 |
+| learned, open, logit >= 4 | 0.9262 | 0.9172 | 0.9184 | 12/9/48 |
+| learned, open, logit >= 5 | 0.9224 | 0.9106 | 0.9129 | 8/6/52 |
+| both-embryo weights, logit >= 3 | 0.9318 | 0.9185 | 0.9212 | 15/15/45 |
+| both-embryo weights, logit >= 4 | 0.9327 | 0.9107 | 0.9169 | 11/9/49 |
+
+The gain is real on average but thinner and less even than on the 0.948 pipeline: 6bba carries it,
+44b6 sits within one division event of baseline, and the out-of-fold intercepts differ (-9.8 vs
+-0.9), so the threshold is fragile. The peak at 3 is interior (2 and 4 both lower).
+
+**C020** (`homeshwarrao/biohub-c020-divranker`): v020, tight55 fixed, sweep and validator off, gates
+opened, both-embryo ranker, logit >= 3. Patch verified identical to the lab variant on 40/40 clips.
+
+**Pre-registration.** Replay +0.006 (in-sample weights; +0.006 out-of-fold). Expect heavy shrinkage:
+the division term is 0.1x, the 44b6 fold did not move, and the test is a third embryo. Predicted
+public LB **0.946-0.951**, most likely 0.947-0.949. Below 0.946 = the ranker does not transfer;
+0.947 = no detectable effect.

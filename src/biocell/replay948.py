@@ -21,7 +21,7 @@ import pickle
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-BASE_NB = REPO / "bases" / "biohub-948-sew20.ipynb"
+BASE_NB = Path(os.environ.get("DIVLAB_BASE_NB", REPO / "bases" / "biohub-948-sew20.ipynb"))
 
 TAIL_FUNCS = [
     "edge_distance_um", "point_distance_um", "node_point", "edge_sort_key", "_position_um",

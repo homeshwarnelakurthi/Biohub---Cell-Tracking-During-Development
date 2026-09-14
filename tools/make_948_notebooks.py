@@ -50,6 +50,7 @@ BUILDS = {
     "divlab": ("biohub-divlab-948", "Biohub Divlab 948"),
     "b948rank": ("biohub-b948-divranker", "Biohub B948 Divranker"),
     "divlab020": ("biohub-divlab-v020", "Biohub Divlab V020"),
+    "c020rank": ("biohub-c020-divranker", "Biohub C020 Divranker"),
 }
 
 # v020 (our real 0.947). Its validator sweep selected tight55 in the scored run; the lab fixes that
@@ -90,7 +91,7 @@ ENV_REMOVE = [
 
 RANK_BLOCK_START = "                # PATCH: forward divergence."
 RANK_BLOCK_END = "                proposals.append((score, source_id, candidate_id, parent_dist, sister_dist))\n"
-RANK_BLOCK = f'''                # B948 learned ranker. Features mirror experiments/divlab/divlab.py exactly.
+RANK_BLOCK_TEMPLATE = '''                # B948 learned ranker. Features mirror experiments/divlab/divlab.py exactly.
                 _rk_div = float("nan")
                 _rk_c1 = out_by_source.get(existing_child_id, [])
                 _rk_q1 = out_by_source.get(candidate_id, [])
@@ -117,13 +118,71 @@ RANK_BLOCK = f'''                # B948 learned ranker. Features mirror experime
                          _rk_prob, float(_rk_len), sister_dist]
                 _rk_fill = [0.22, 0.22, -3.0, 0.22, 0.85, 0.22, 0.22]
                 _rk_x = [f if x != x else x for x, f in zip(_rk_x, _rk_fill)]
-                _rk_logit = {RANK_INTERCEPT!r} + sum(c * x for c, x in zip({RANK_COEF!r}, _rk_x))
-                if _rk_logit < {RANK_MIN_LOGIT!r}:
+                _rk_logit = @INTERCEPT@ + sum(c * x for c, x in zip(@COEF@, _rk_x))
+                if _rk_logit < @MIN@:
                     stats["safe_division_divergence_rejected"] += 1
                     continue
                 score = -_rk_logit
                 proposals.append((score, source_id, candidate_id, parent_dist, sister_dist))
 '''
+
+def rank_block(coef, intercept, min_logit) -> str:
+    return (RANK_BLOCK_TEMPLATE.replace("@INTERCEPT@", repr(intercept))
+            .replace("@COEF@", repr(coef)).replace("@MIN@", repr(min_logit)))
+
+
+RANK_BLOCK = rank_block(RANK_COEF, RANK_INTERCEPT, RANK_MIN_LOGIT)
+
+# ---------------------------------------------------------------- C: ranker on the real 0.947 base
+# Refit on divlab-v020 snapshots (v020 pipeline, same 40 clips). Replay, official metric, weights
+# fitted on the other embryo: logit>=2 0.9179, >=3 0.9213, >=4 0.9184 vs baseline 0.9151.
+C020_COEF = [-1.0031255508986188, -0.33057432527322034, 0.9998033682002463, 12.29837141916297,
+             -6.610928547104125, 0.31872222632620173, 0.7031084070261245]
+C020_INTERCEPT = -2.011991122873619
+C020_MIN_LOGIT = 3.0
+C020_ENV = ENV_ANCHOR + (
+    "# C020: v020 selected post-process fixed (tight55), sweep and validator off, learned ranker\n"
+    'os.environ["BIOHUB_MOTION_RELINK_TIGHT_UM"] = "5.5"\n'
+    'os.environ["BIOHUB_VALIDATOR_ENABLE"] = "0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_MAX_UM"] = "10.0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_SISTER_MAX_UM"] = "16.0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_EXISTING_CHILD_MAX_UM"] = "12.0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_REQUIRE_MUTUAL_NN"] = "0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_REQUIRE_DIVERGENCE"] = "0"\n'
+    'os.environ["BIOHUB_SAFE_DIV_SISTER_SYMMETRY_TAU"] = "0.0"\n'
+)
+C020_BLOCK_START = "                if SAFE_DIV_REQUIRE_DIVERGENCE:\n                    c1_succ = out_by_source.get(existing_child_id, [])\n"
+
+
+def apply_c020(nb: dict) -> None:
+    codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    env = [c for c in codes if ENV_ANCHOR in "".join(c["source"])]
+    assert len(env) == 1
+    src = "".join(env[0]["source"])
+    assert src.count(ENV_ANCHOR) == 1
+    # Later assignments win: cell 2 reads the environment after cell 0 has run top to bottom.
+    env[0]["source"] = src.replace(ENV_ANCHOR, C020_ENV).splitlines(keepends=True)
+
+    sweep = [c for c in codes if V020_SWEEP_START in "".join(c["source"])]
+    assert len(sweep) == 1
+    src = "".join(sweep[0]["source"])
+    a = src.index(V020_SWEEP_START)
+    b = src.index(V020_SWEEP_END) + len(V020_SWEEP_END)
+    sweep[0]["source"] = (src[:a] + "PP_CANDIDATES: dict[str, dict] = {}  # C020: sweep removed\n"
+                          + src[b:]).splitlines(keepends=True)
+
+    cells = [c for c in codes if C020_BLOCK_START in "".join(c["source"])]
+    assert len(cells) == 1
+    src = "".join(cells[0]["source"])
+    assert src.count(C020_BLOCK_START) == 1 and src.count(RANK_BLOCK_END) == 1
+    a = src.index(C020_BLOCK_START)
+    b = src.index(RANK_BLOCK_END) + len(RANK_BLOCK_END)
+    old = src[a:b]
+    assert "score = parent_dist + 0.15 * sister_dist" in old and "SAFE_DIV_SISTER_SYMMETRY_TAU" in old
+    cells[0]["source"] = (src[:a] + rank_block(C020_COEF, C020_INTERCEPT, C020_MIN_LOGIT)
+                          + src[b:]).splitlines(keepends=True)
+    print("  applied: tight55 fixed, sweep+validator off, gates opened, v020 learned ranker (logit>=3)")
+
 
 DIVLAB_ENV = ENV_ANCHOR + (
     "# divlab: a large held-out slice so division statistics are not a handful of events\n"
@@ -300,7 +359,9 @@ def apply_divlab020(nb: dict) -> None:
 def build(kind: str) -> Path:
     slug, title = BUILDS[kind]
     assert slugify(title) == slug, (title, slug)
-    nb = json.loads((V020_NB if kind == "divlab020" else BASE_NB).read_text(encoding="utf-8"))
+    nb = json.loads((V020_NB if kind in ("divlab020", "c020rank") else BASE_NB).read_text(encoding="utf-8"))
+    if kind == "c020rank":
+        apply_c020(nb)
     if kind == "divlab020":
         apply_divlab020(nb)
 

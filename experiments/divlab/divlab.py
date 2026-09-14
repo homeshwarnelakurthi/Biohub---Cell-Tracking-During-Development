@@ -25,7 +25,8 @@ sys.path.insert(0, str(REPO / "src"))
 from biocell import replay948 as R  # noqa: E402
 
 DIVLAB = Path(os.environ.get("DIVLAB", REPO / "experiments" / "divlab" / "data"))
-OUT = Path(__file__).resolve().parent
+OUT = Path(__file__).resolve().parent / os.environ.get("DIVLAB_TAG", "")
+OUT.mkdir(exist_ok=True)
 
 
 def stems() -> list[str]:
@@ -139,6 +140,9 @@ def make_safe_div(ns: dict, p: dict, collect: list | None = None):
                     dq = dc.get(int(qid))
                     if p["dc_thr"] is not None and dq is not None and dq < p["dc_thr"]:
                         continue
+                    if p.get("sym_tau", 0.0) > 0.0 and not stolen:
+                        if abs(child_dist - pd_) / max((child_dist + pd_) / 2.0, 1e-6) > p["sym_tau"]:
+                            continue
                     f = {
                         "t": t, "source": sid, "child": cid, "cand": qid, "stolen": int(stolen),
                         "thief_dist": edge_distance_um(nodes_by_id[pred_of[qid]], q) if stolen else float("nan"),
@@ -205,6 +209,7 @@ def baseline_params(ns: dict) -> dict:
         "dc_thr": ns["DEEPCENTER_SAFE_DIV_THRESHOLD"] if ns["DEEPCENTER_SAFE_DIV_VETO"] else None,
         "frame_cap": ns["SAFE_DIV_FRAME_FRAC_CAP"], "global_cap": ns["SAFE_DIV_GLOBAL_FRAC_CAP"],
         "rank": lambda f: f["parent_dist"] + 0.15 * f["sister_dist"],
+        "sym_tau": float(ns.get("SAFE_DIV_SISTER_SYMMETRY_TAU", 0.0)),
     }
 
 
@@ -289,7 +294,7 @@ def task_features(stem: str) -> list[dict]:
     R.install_dc_lookup(ns, snap)
     p = baseline_params(ns)
     # Wide-open pool so the labels describe what a better ranker could choose from.
-    p.update(parent_max=12.0, sister_max=18.0, child_max=12.0, mutual_nn=False, diverge=None, dc_thr=None,
+    p.update(parent_max=12.0, sister_max=18.0, child_max=12.0, mutual_nn=False, diverge=None, dc_thr=None, sym_tau=0.0,
              frame_cap=1.0, global_cap=1.0, steal=True)
     rows: list[dict] = []
     fn = make_safe_div(ns, p, collect=rows)
@@ -348,7 +353,7 @@ def run_variant(stem: str, name: str, overrides: dict, rank_name: str) -> dict:
 RANKERS = {
     "baseline": lambda f: f["parent_dist"] + 0.15 * f["sister_dist"],
 }
-OPEN = dict(parent_max=10.0, sister_max=16.0, child_max=12.0, mutual_nn=False, diverge=None, dc_thr=None)
+OPEN = dict(parent_max=10.0, sister_max=16.0, child_max=12.0, mutual_nn=False, diverge=None, dc_thr=None, sym_tau=0.0)
 VARIANTS: dict[str, tuple[dict, str]] = {
     "baseline": ({}, "baseline"),
     "logit_gated": ({}, "logit_loeo"),
@@ -359,6 +364,14 @@ VARIANTS: dict[str, tuple[dict, str]] = {
     "logit_open_min2": ({**OPEN, "min_logit": 2.0}, "logit_loeo"),
     "logit_open_min1_cap2x": ({**OPEN, "min_logit": 1.0, "frame_cap": 0.0152, "global_cap": 0.0075}, "logit_loeo"),
     "open_baseline_key": (OPEN, "baseline"),
+    "keepgates_min1": ({**OPEN, "sym_tau": 0.6, "dc_thr": 0.20, "min_logit": 1.0}, "logit_loeo"),
+    "keepgates_min0": ({**OPEN, "sym_tau": 0.6, "dc_thr": 0.20, "min_logit": 0.0}, "logit_loeo"),
+    "logit_open_min3": ({**OPEN, "min_logit": 3.0}, "logit_loeo"),
+    "logit_open_min4": ({**OPEN, "min_logit": 4.0}, "logit_loeo"),
+    "logit_open_min5": ({**OPEN, "min_logit": 5.0}, "logit_loeo"),
+    "logit_open_min6": ({**OPEN, "min_logit": 6.0}, "logit_loeo"),
+    "ALLmodel_open_min3": ({**OPEN, "min_logit": 3.0}, "logit_all"),
+    "ALLmodel_open_min4": ({**OPEN, "min_logit": 4.0}, "logit_all"),
     "min1_steal0": ({**OPEN, "min_logit": 1.0, "steal_min_logit": 0.0}, "logit_loeo"),
     "min1_steal1": ({**OPEN, "min_logit": 1.0, "steal_min_logit": 1.0}, "logit_loeo"),
     "min1_steal2": ({**OPEN, "min_logit": 1.0, "steal_min_logit": 2.0}, "logit_loeo"),
