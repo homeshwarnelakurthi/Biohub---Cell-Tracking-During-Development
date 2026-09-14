@@ -320,6 +320,38 @@ def task_features(stem: str) -> list[dict]:
     return rows
 
 
+def run_tail_variant(stem: str, name: str, env: dict) -> dict:
+    """Verbatim notebook safe divisions + tail, with notebook env overrides (BIOHUB_* keys)."""
+    from biocell import official_score as O
+    ns = R.build_namespace(env_overrides=env)
+    snap, _ = _load(stem)
+    nodes, edges, stats = R.replay(snap, ns)
+    rounded = env.get("_ROUNDED", "1") == "1"
+    row = O.score_sample(nodes, edges, gt_path(stem), rounded=rounded)
+    row.update(stem=stem, embryo=stem.split("_")[0], variant=name, safe_divs=stats["safe_divisions_added"])
+    return row
+
+
+TAIL_VARIANTS: dict[str, dict] = {
+    "tail_base": {},
+    "minlen5": {"BIOHUB_OUTPUT_MIN_TRACK_LEN": "5"},
+    "minlen7": {"BIOHUB_OUTPUT_MIN_TRACK_LEN": "7"},
+    "minlen8": {"BIOHUB_OUTPUT_MIN_TRACK_LEN": "8"},
+    "minlen4": {"BIOHUB_OUTPUT_MIN_TRACK_LEN": "4"},
+    "no_rescue": {"BIOHUB_ADAPTIVE_SHORT_TRACK_RESCUE": "0"},
+    "no_keepdiv": {"BIOHUB_OUTPUT_KEEP_DIVISION_COMPONENTS": "0"},
+    "linefit_off": {"BIOHUB_OUTPUT_LINEFIT_SMOOTH": "0"},
+    "linefit_w06": {"BIOHUB_OUTPUT_LINEFIT_WEIGHT": "0.6"},
+    "linefit_w10": {"BIOHUB_OUTPUT_LINEFIT_WEIGHT": "1.0"},
+    "linefit_win3": {"BIOHUB_OUTPUT_LINEFIT_WINDOW": "3"},
+    "linefit_win1": {"BIOHUB_OUTPUT_LINEFIT_WINDOW": "1"},
+    "divgeom_on": {"BIOHUB_OUTPUT_DIVISION_GEOMETRY_FILTER": "1"},
+    "float_coords": {"_ROUNDED": "0"},
+    "float_linefit_w10": {"_ROUNDED": "0", "BIOHUB_OUTPUT_LINEFIT_WEIGHT": "1.0"},
+    "float_linefit_win3": {"_ROUNDED": "0", "BIOHUB_OUTPUT_LINEFIT_WINDOW": "3"},
+}
+
+
 def run_variant(stem: str, name: str, overrides: dict, rank_name: str) -> dict:
     from biocell import official_score as O
     ns = R.build_namespace()
@@ -403,6 +435,24 @@ def main() -> int:
             w.writeheader()
             w.writerows(rows)
         print(f"{len(rows)} proposals, {sum(r['label'] for r in rows)} positive -> proposals.csv")
+    elif cmd == "tailsweep":
+        from biocell import official_score as O
+        names = sys.argv[2:] or list(TAIL_VARIANTS)
+        rows = _pool(run_tail_variant, [(s, n, TAIL_VARIANTS[n]) for n in names for s in ss])
+        with open(OUT / "tail_rows.csv", "a", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=sorted(rows[0]))
+            if fh.tell() == 0:
+                w.writeheader()
+            w.writerows(rows)
+        base = {f: O.summarise([r for r in rows if r["variant"] == names[0] and (f == "ALL" or r["embryo"] == f)])
+                for f in ["44b6", "6bba", "ALL"]}
+        print(f"{'variant':<14}" + "".join(f"{f:>18}" for f in ["44b6", "6bba", "ALL"]) + "   (score, delta vs first)")
+        for n in names:
+            cells = []
+            for f in ["44b6", "6bba", "ALL"]:
+                s = O.summarise([r for r in rows if r["variant"] == n and (f == "ALL" or r["embryo"] == f)])
+                cells.append(f"{s['score']:.4f} {s['score'] - base[f]['score']:+.4f}")
+            print(f"{n:<14}" + "".join(f"{c:>18}" for c in cells))
     elif cmd == "sweep":
         from biocell import official_score as O
         names = sys.argv[2:] or list(VARIANTS)

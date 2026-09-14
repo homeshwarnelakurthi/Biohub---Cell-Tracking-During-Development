@@ -386,7 +386,7 @@ def build(kind: str) -> Path:
     for c in nb["cells"]:
         if c["cell_type"] == "code":
             c["outputs"] = []
-            c["execution_count"] = None
+            c["execution_count"]= None
     nb.get("metadata", {}).pop("papermill", None)
 
     out_dir = REPO / "notebooks" / slug.replace("biohub-", "", 1)

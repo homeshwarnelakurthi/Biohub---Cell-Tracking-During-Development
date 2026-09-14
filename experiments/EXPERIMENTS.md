@@ -383,3 +383,23 @@ opened, both-embryo ranker, logit >= 3. Patch verified identical to the lab vari
 the division term is 0.1x, the 44b6 fold did not move, and the test is a third embryo. Predicted
 public LB **0.946-0.951**, most likely 0.947-0.949. Below 0.946 = the ranker does not transfer;
 0.947 = no detectable effect.
+
+## v020 tail sweep and coordinate precision (2026-09-14, local replay, official metric)
+Every tail knob is at or near its local optimum; nothing improves both embryos:
+
+| change | 44b6 | 6bba | ALL |
+|---|---|---|---|
+| min track len 7 / 5 / 4 / 8 | +0.0027 / -0.0001 / +0.0003 / -0.0002 | -0.0018 / -0.0002 / -0.0010 / -0.0042 | -0.0006 / -0.0002 / -0.0007 / -0.0031 |
+| short-track rescue off, keep-division off | 0 | 0 | 0 (inactive on these clips) |
+| line-fit smoothing **off** | **-0.0106** | **-0.0072** | **-0.0080** |
+| line-fit weight 0.6 / 1.0, window 1 / 3 | -0.002 to -0.006 | ~0 to -0.002 | -0.0004 to -0.0020 |
+| division-geometry filter on | -0.0089 | -0.0074 | -0.0078 |
+
+Line-fit smoothing alone is worth +0.008 - more than any division change - which says node *position*
+is a strong lever at the 7 um match radius.
+
+**Coordinate precision.** The submission writer rounds z/y/x to integer voxels (z voxel = 1.625 um).
+The official `csv_to_geffs.py` casts coordinates to Float64, so sub-voxel values are parseable.
+Scoring the same v020 graphs unrounded: **44b6 +0.0014, 6bba +0.0012, ALL +0.0012** - both embryos,
+no other change. Stronger smoothing on top of floats does not help (w1.0 -0.0001, window 3 -0.0003).
+Untested risk: whether Kaggle's submission validator accepts non-integer coordinates.

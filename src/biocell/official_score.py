@@ -40,19 +40,20 @@ def estimated_nodes(geff_path: Path) -> float:
     return float(v) if v is not None else float("nan")
 
 
-def plain_to_graph(nodes_by_id: dict, edges: list):
+def plain_to_graph(nodes_by_id: dict, edges: list, rounded: bool = True):
+    import polars as pl
     g = td.graph.IndexedRXGraph()
     for k in ("z", "y", "x"):
-        g.add_node_attr_key(k, dtype=__import__("polars").Int64, default_value=0)
+        g.add_node_attr_key(k, dtype=pl.Int64 if rounded else pl.Float64, default_value=0 if rounded else 0.0)
     ids = sorted(int(n) for n in nodes_by_id)
     rows = []
     for nid in ids:
         n = nodes_by_id[nid]
         rows.append({
             td.DEFAULT_ATTR_KEYS.T: int(n["t"]),
-            "z": max(0, int(round(float(n["z"])))),
-            "y": max(0, int(round(float(n["y"])))),
-            "x": max(0, int(round(float(n["x"])))),
+            "z": max(0, int(round(float(n["z"])))) if rounded else max(0.0, float(n["z"])),
+            "y": max(0, int(round(float(n["y"])))) if rounded else max(0.0, float(n["y"])),
+            "x": max(0, int(round(float(n["x"])))) if rounded else max(0.0, float(n["x"])),
         })
     if rows:
         g.bulk_add_nodes(rows, indices=ids)
@@ -62,8 +63,8 @@ def plain_to_graph(nodes_by_id: dict, edges: list):
     return g
 
 
-def score_sample(nodes_by_id: dict, edges: list, gt_geff: Path, scale=DEFAULT_SCALE) -> dict:
-    pred = plain_to_graph(nodes_by_id, edges)
+def score_sample(nodes_by_id: dict, edges: list, gt_geff: Path, scale=DEFAULT_SCALE, rounded: bool = True) -> dict:
+    pred = plain_to_graph(nodes_by_id, edges, rounded=rounded)
     gt = load_gt(gt_geff)
     er = evaluate(pred, gt, scale=scale, max_distance=7.0)
     rec = node_recall(pred, gt) if pred.num_edges() > 0 and pred.num_nodes() > 0 else 0.0
