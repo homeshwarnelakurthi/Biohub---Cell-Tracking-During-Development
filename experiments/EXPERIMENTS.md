@@ -422,3 +422,27 @@ truncating floats. Dropped; M019. C020 remains best.
 **Bootstrap of the v020 ranker gain over clips** (2000 resamples, official metric): logit>=3
 +0.0060, 90% CI [+0.0012, +0.0106], P(gain>0) 0.98; logit>=2 and >=4 P 0.83 with CIs spanning zero.
 The C020 threshold was the only robust one - consistent with its LB result.
+
+## Ranker refit on 128 clips -> D020 (2026-09-15)
+`divlab-v020-big`: 128 held-out TRAIN clips, replay 128/128 exact, **106** GT-division positives
+(40-clip lab: 18). Refit, weights from the other embryo, official metric:
+
+| variant | 44b6 | 6bba | ALL | div TP/FP/FN |
+|---|---|---|---|---|
+| baseline | 0.9178 | 0.9094 | 0.9115 | 24/74/122 |
+| logit >= 2 | 0.9177 | 0.9161 | 0.9168 | 44/124/102 |
+| **logit >= 3** | **0.9198** | **0.9163** | **0.9174** | 36/69/110 |
+| logit >= 4 | 0.9168 | 0.9146 | 0.9157 | 27/35/119 |
+
+Same interior peak at 3 and the same +0.006 as the 40-clip lab: C020's gain was not a small-sample
+artifact.
+
+**Head-to-head on the 88 clips C020's ranker never saw** (44b6 has 1 GT division there - uninformative):
+6bba baseline 0.9102, C020 ranker 0.9139, refit trained on 44b6 only 0.9161, refit on both 0.9168
+(partly in-sample). Refit beats the shipped ranker by ~+0.002 out-of-sample on 82 GT divisions.
+
+**D020** (`homeshwarrao/biohub-d020-divranker-128`): C020 with the 128-clip weights; one line differs.
+Patch verified identical to the lab variant on 128/128 clips.
+**Pre-registration:** public LB **0.950-0.953**, most likely 0.951-0.952. Equal to 0.951 is the
+expected no-detectable-change outcome given ~+0.001 after shrinkage; the case for it is private-set
+stability (6x the training positives), not a public gain.

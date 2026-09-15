@@ -54,6 +54,7 @@ BUILDS = {
     "c020rank": ("biohub-c020-divranker", "Biohub C020 Divranker"),
     "f020float": ("biohub-f020-float-coords", "Biohub F020 Float Coords"),
     "cf020": ("biohub-cf020-divranker-float", "Biohub CF020 Divranker Float"),
+    "d020rank": ("biohub-d020-divranker-128", "Biohub D020 Divranker 128"),
 }
 
 # v020 (our real 0.947). Its validator sweep selected tight55 in the scored run; the lab fixes that
@@ -157,7 +158,15 @@ C020_ENV = ENV_ANCHOR + (
 C020_BLOCK_START = "                if SAFE_DIV_REQUIRE_DIVERGENCE:\n                    c1_succ = out_by_source.get(existing_child_id, [])\n"
 
 
-def apply_c020(nb: dict) -> None:
+# ---------------------------------------------------------------- D: ranker refit on 128 clips
+# divlab-v020-big: 106 GT divisions (vs 18). On the 88 clips C020's ranker never saw, 6bba (82 GT
+# divisions): baseline 0.9102, C020 ranker 0.9139, refit out-of-embryo 0.9161. Threshold kept at 3,
+# the setting C020 validated on the leaderboard (0.951).
+D020_COEF = [-0.7185543063793053, -0.006422019686378679, 0.7152700698026494, 12.607416830115698, -6.254646964513521, -0.08950424787121182, 0.5136541607096013]
+D020_INTERCEPT = 1.5231289849344143
+
+
+def apply_c020(nb: dict, coef=None, intercept=None) -> None:
     codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
     env = [c for c in codes if ENV_ANCHOR in "".join(c["source"])]
     assert len(env) == 1
@@ -182,7 +191,8 @@ def apply_c020(nb: dict) -> None:
     b = src.index(RANK_BLOCK_END) + len(RANK_BLOCK_END)
     old = src[a:b]
     assert "score = parent_dist + 0.15 * sister_dist" in old and "SAFE_DIV_SISTER_SYMMETRY_TAU" in old
-    cells[0]["source"] = (src[:a] + rank_block(C020_COEF, C020_INTERCEPT, C020_MIN_LOGIT)
+    cells[0]["source"] = (src[:a] + rank_block(coef or C020_COEF, C020_INTERCEPT if intercept is None else intercept,
+                                               C020_MIN_LOGIT)
                           + src[b:]).splitlines(keepends=True)
     print("  applied: tight55 fixed, sweep+validator off, gates opened, v020 learned ranker (logit>=3)")
 
@@ -412,13 +422,15 @@ def apply_divlab020(nb: dict, n_per_type: int = 20) -> None:
 def build(kind: str) -> Path:
     slug, title = BUILDS[kind]
     assert slugify(title) == slug, (title, slug)
-    nb = json.loads((V020_NB if kind in ("divlab020", "divlab020big", "c020rank", "f020float", "cf020") else BASE_NB)
+    nb = json.loads((V020_NB if kind in ("divlab020", "divlab020big", "c020rank", "f020float", "cf020", "d020rank") else BASE_NB)
                     .read_text(encoding="utf-8"))
     if kind == "divlab020big":
         # 64 per embryo: all of 44b6's 71 clips but 7, half of 6bba's 128; division clips first.
         apply_divlab020(nb, n_per_type=64)
     if kind in ("c020rank", "cf020"):
         apply_c020(nb)
+    if kind == "d020rank":
+        apply_c020(nb, coef=D020_COEF, intercept=D020_INTERCEPT)
     if kind == "f020float":
         apply_v020_fixed(nb, F020_ENV)
     if kind in ("f020float", "cf020"):
