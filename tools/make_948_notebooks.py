@@ -50,6 +50,7 @@ BUILDS = {
     "divlab": ("biohub-divlab-948", "Biohub Divlab 948"),
     "b948rank": ("biohub-b948-divranker", "Biohub B948 Divranker"),
     "divlab020": ("biohub-divlab-v020", "Biohub Divlab V020"),
+    "divlab020big": ("biohub-divlab-v020-big", "Biohub Divlab V020 Big"),
     "c020rank": ("biohub-c020-divranker", "Biohub C020 Divranker"),
     "f020float": ("biohub-f020-float-coords", "Biohub F020 Float Coords"),
     "cf020": ("biohub-cf020-divranker-float", "Biohub CF020 Divranker Float"),
@@ -379,7 +380,7 @@ def apply_ranker(nb: dict) -> None:
     print("  applied: ranker env (gates opened), learned ranker block")
 
 
-def apply_divlab020(nb: dict) -> None:
+def apply_divlab020(nb: dict, n_per_type: int = 20) -> None:
     codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
     env = [c for c in codes if ENV_ANCHOR in "".join(c["source"])]
     assert len(env) == 1, len(env)
@@ -388,7 +389,9 @@ def apply_divlab020(nb: dict) -> None:
     old_n = 'os.environ["BIOHUB_VALIDATOR_N_PER_TYPE"] = "4"\n'
     assert src.count(old_n) == 1
     src = src.replace(old_n, "")
-    env[0]["source"] = src.replace(ENV_ANCHOR, V020_ENV).splitlines(keepends=True)
+    env_block = V020_ENV.replace('N_PER_TYPE"] = "20"', f'N_PER_TYPE"] = "{n_per_type}"')
+    assert f'N_PER_TYPE"] = "{n_per_type}"' in env_block
+    env[0]["source"] = src.replace(ENV_ANCHOR, env_block).splitlines(keepends=True)
 
     sweep = [c for c in codes if V020_SWEEP_START in "".join(c["source"])]
     assert len(sweep) == 1
@@ -409,8 +412,11 @@ def apply_divlab020(nb: dict) -> None:
 def build(kind: str) -> Path:
     slug, title = BUILDS[kind]
     assert slugify(title) == slug, (title, slug)
-    nb = json.loads((V020_NB if kind in ("divlab020", "c020rank", "f020float", "cf020") else BASE_NB)
+    nb = json.loads((V020_NB if kind in ("divlab020", "divlab020big", "c020rank", "f020float", "cf020") else BASE_NB)
                     .read_text(encoding="utf-8"))
+    if kind == "divlab020big":
+        # 64 per embryo: all of 44b6's 71 clips but 7, half of 6bba's 128; division clips first.
+        apply_divlab020(nb, n_per_type=64)
     if kind in ("c020rank", "cf020"):
         apply_c020(nb)
     if kind == "f020float":
