@@ -414,3 +414,11 @@ replay rather than the notebook validator. Next: CF020 (C020 + sub-voxel coordin
 nodes round differently) + sub-voxel coordinates (98% of nodes). Pre-registered: **0.951-0.953**, most
 likely 0.952. A submission error would mean Kaggle's validator requires integer coordinates; 0.951
 means the replay gain (+0.0012) is below LB resolution.
+
+**CF020 RESULT: 0.940** (C020 0.951; pre-registered 0.951-0.953). Sub-voxel coordinates cost -0.011
+on the leaderboard. Replay with truncated coordinates: -0.006 - consistent with the hosted scorer
+truncating floats. Dropped; M019. C020 remains best.
+
+**Bootstrap of the v020 ranker gain over clips** (2000 resamples, official metric): logit>=3
++0.0060, 90% CI [+0.0012, +0.0106], P(gain>0) 0.98; logit>=2 and >=4 P 0.83 with CIs spanning zero.
+The C020 threshold was the only robust one - consistent with its LB result.

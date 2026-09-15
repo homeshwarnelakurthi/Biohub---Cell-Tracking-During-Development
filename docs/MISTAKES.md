@@ -353,3 +353,26 @@ error as M017 in a different place: a claim inside someone else's artifact treat
 2. When a notebook looks simpler than ours and reportedly scores higher, verify before building on it.
 3. Research built on it (DIVLAB) is not wasted - the ranker's mechanism is pipeline-level - but it
    must be refit and re-verified on the base we actually ship (divlab-v020) before it is trusted.
+
+---
+
+## M019 — Assumed Kaggle's scorer ingests the CSV like the organisers' reference converter
+**Date:** 2026-09-15, exposed by CF020 scoring 0.940 against C020's 0.951
+**What happened.** The replay showed sub-voxel coordinates worth +0.0012 on both embryos, and the
+public `csv_to_geffs.py` casts coordinates to Float64, so I shipped C020 with unrounded coordinates
+and nothing else changed (identical rows and divisions). The leaderboard fell 0.011.
+
+**Why.** My scorer built graphs directly from floats; Kaggle's evaluation reads the submitted CSV
+through its own path. Re-scoring the same replay graphs with coordinates **truncated** instead of
+rounded gives 0.9091 vs 0.9151 (-0.006, 6bba -0.008) - same direction and order as the LB drop, so
+the most likely explanation is that the hosted scorer casts coordinates to integer by truncation.
+Not proven, but the lesson does not depend on the exact cause: I tested the *metric* locally and
+the *file format* nowhere.
+
+**Change.**
+1. Anything that changes the submission file's format - dtypes, precision, column handling - is
+   tested against the leaderboard as a lone change before it is combined with anything, and is
+   never assumed from reference code.
+2. Local replay results are statements about graphs, not about CSV files. The chain from graph to
+   leaderboard includes an ingestion step we cannot see.
+3. The writer stays on integer rounding (the format every scored submission, including 0.951, used).
