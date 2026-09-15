@@ -403,3 +403,9 @@ The official `csv_to_geffs.py` casts coordinates to Float64, so sub-voxel values
 Scoring the same v020 graphs unrounded: **44b6 +0.0014, 6bba +0.0012, ALL +0.0012** - both embryos,
 no other change. Stronger smoothing on top of floats does not help (w1.0 -0.0001, window 3 -0.0003).
 Untested risk: whether Kaggle's submission validator accepts non-integer coordinates.
+
+**C020 RESULT: public LB 0.951** (v020 0.947; pre-registered 0.946-0.951). A new best by +0.004, four
+times the noise floor, at the top of the predicted range. The learned division ranker transfers to
+the unseen test embryo; the replay gain (+0.006) shrank by about a third, less than feared. This is
+the first mechanism-derived gain since adopting the public base, and it came from the official-metric
+replay rather than the notebook validator. Next: CF020 (C020 + sub-voxel coordinates, replay +0.0012).
