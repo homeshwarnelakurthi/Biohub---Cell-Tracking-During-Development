@@ -51,6 +51,8 @@ BUILDS = {
     "b948rank": ("biohub-b948-divranker", "Biohub B948 Divranker"),
     "divlab020": ("biohub-divlab-v020", "Biohub Divlab V020"),
     "c020rank": ("biohub-c020-divranker", "Biohub C020 Divranker"),
+    "f020float": ("biohub-f020-float-coords", "Biohub F020 Float Coords"),
+    "cf020": ("biohub-cf020-divranker-float", "Biohub CF020 Divranker Float"),
 }
 
 # v020 (our real 0.947). Its validator sweep selected tight55 in the scored run; the lab fixes that
@@ -182,6 +184,54 @@ def apply_c020(nb: dict) -> None:
     cells[0]["source"] = (src[:a] + rank_block(C020_COEF, C020_INTERCEPT, C020_MIN_LOGIT)
                           + src[b:]).splitlines(keepends=True)
     print("  applied: tight55 fixed, sweep+validator off, gates opened, v020 learned ranker (logit>=3)")
+
+
+# ---------------------------------------------------------------- F: sub-voxel coordinates
+# The writer rounds z/y/x to integer voxels (z voxel = 1.625 um). The official csv_to_geffs.py casts
+# coordinates to Float64. Replay on 40 v020 clips, official metric: +0.0014 (44b6), +0.0012 (6bba).
+F020_ENV = ENV_ANCHOR + (
+    "# F020: v020 selected post-process fixed (tight55), sweep and validator off, float coordinates\n"
+    'os.environ["BIOHUB_MOTION_RELINK_TIGHT_UM"] = "5.5"\n'
+    'os.environ["BIOHUB_VALIDATOR_ENABLE"] = "0"\n'
+)
+ROUND_LINES = [
+    '                    "z": max(0, int(round(float(node["z"])))),\n',
+    '                    "y": max(0, int(round(float(node["y"])))),\n',
+    '                    "x": max(0, int(round(float(node["x"])))),\n',
+]
+FLOAT_LINES = [
+    '                    "z": round(max(0.0, float(node["z"])), 3),\n',
+    '                    "y": round(max(0.0, float(node["y"])), 3),\n',
+    '                    "x": round(max(0.0, float(node["x"])), 3),\n',
+]
+
+
+def apply_v020_fixed(nb: dict, env_block: str) -> None:
+    codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    env = [c for c in codes if ENV_ANCHOR in "".join(c["source"])]
+    assert len(env) == 1
+    src = "".join(env[0]["source"])
+    assert src.count(ENV_ANCHOR) == 1
+    env[0]["source"] = src.replace(ENV_ANCHOR, env_block).splitlines(keepends=True)
+    sweep = [c for c in codes if V020_SWEEP_START in "".join(c["source"])]
+    assert len(sweep) == 1
+    src = "".join(sweep[0]["source"])
+    a = src.index(V020_SWEEP_START)
+    b = src.index(V020_SWEEP_END) + len(V020_SWEEP_END)
+    sweep[0]["source"] = (src[:a] + "PP_CANDIDATES: dict[str, dict] = {}  # sweep removed\n"
+                          + src[b:]).splitlines(keepends=True)
+
+
+def apply_float_coords(nb: dict) -> None:
+    codes = [c for c in nb["cells"] if c["cell_type"] == "code"]
+    hits = [c for c in codes if all(l in "".join(c["source"]) for l in ROUND_LINES)]
+    assert len(hits) == 1, len(hits)
+    src = "".join(hits[0]["source"])
+    for r, f in zip(ROUND_LINES, FLOAT_LINES):
+        assert src.count(r) == 1
+        src = src.replace(r, f)
+    hits[0]["source"] = src.splitlines(keepends=True)
+    print("  applied: float coordinates in the submission writer")
 
 
 DIVLAB_ENV = ENV_ANCHOR + (
@@ -359,9 +409,14 @@ def apply_divlab020(nb: dict) -> None:
 def build(kind: str) -> Path:
     slug, title = BUILDS[kind]
     assert slugify(title) == slug, (title, slug)
-    nb = json.loads((V020_NB if kind in ("divlab020", "c020rank") else BASE_NB).read_text(encoding="utf-8"))
-    if kind == "c020rank":
+    nb = json.loads((V020_NB if kind in ("divlab020", "c020rank", "f020float", "cf020") else BASE_NB)
+                    .read_text(encoding="utf-8"))
+    if kind in ("c020rank", "cf020"):
         apply_c020(nb)
+    if kind == "f020float":
+        apply_v020_fixed(nb, F020_ENV)
+    if kind in ("f020float", "cf020"):
+        apply_float_coords(nb)
     if kind == "divlab020":
         apply_divlab020(nb)
 
