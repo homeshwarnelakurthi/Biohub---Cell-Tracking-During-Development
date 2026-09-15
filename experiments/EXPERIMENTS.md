@@ -446,3 +446,7 @@ Patch verified identical to the lab variant on 128/128 clips.
 **Pre-registration:** public LB **0.950-0.953**, most likely 0.951-0.952. Equal to 0.951 is the
 expected no-detectable-change outcome given ~+0.001 after shrinkage; the case for it is private-set
 stability (6x the training positives), not a public gain.
+
+**D020 submitted** (2026-09-15). Output checks: validation OK, integer coordinates, 241,321 rows vs
+C020's 241,292, 0.3% of node rows differ (knock-on of different division choices), 83 safe divisions
+vs C020's 95 on the 4 interactive test clips.
