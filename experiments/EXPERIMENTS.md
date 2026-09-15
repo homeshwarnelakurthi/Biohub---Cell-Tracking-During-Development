@@ -409,3 +409,8 @@ times the noise floor, at the top of the predicted range. The learned division r
 the unseen test embryo; the replay gain (+0.006) shrank by about a third, less than feared. This is
 the first mechanism-derived gain since adopting the public base, and it came from the official-metric
 replay rather than the notebook validator. Next: CF020 (C020 + sub-voxel coordinates, replay +0.0012).
+
+**CF020 submitted** (2026-09-15): C020 graph unchanged (identical rows, 95 divisions; 7 of 122,788
+nodes round differently) + sub-voxel coordinates (98% of nodes). Pre-registered: **0.951-0.953**, most
+likely 0.952. A submission error would mean Kaggle's validator requires integer coordinates; 0.951
+means the replay gain (+0.0012) is below LB resolution.
