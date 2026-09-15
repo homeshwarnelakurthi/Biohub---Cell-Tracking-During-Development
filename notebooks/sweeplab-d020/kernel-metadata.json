@@ -1,0 +1,22 @@
+{
+ "id": "homeshwarrao/biohub-sweeplab-d020",
+ "title": "Biohub Sweeplab D020",
+ "code_file": "biohub-sweeplab-d020.ipynb",
+ "language": "python",
+ "kernel_type": "notebook",
+ "is_private": "true",
+ "enable_gpu": "true",
+ "machine_shape": "NvidiaTeslaT4",
+ "enable_internet": "false",
+ "competition_sources": [
+  "biohub-cell-tracking-during-development"
+ ],
+ "dataset_sources": [
+  "pilkwang/biohub-deepcenter-unet3d-center-prior-v1",
+  "pilkwang/biohub-temporal-unet3d-seed314159-v1",
+  "pilkwang/biohub-tracking-support-pack-50ep-v1"
+ ],
+ "kernel_sources": [
+  "homeshwarrao/biohub-divlab-v020"
+ ]
+}

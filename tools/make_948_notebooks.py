@@ -55,7 +55,148 @@ BUILDS = {
     "f020float": ("biohub-f020-float-coords", "Biohub F020 Float Coords"),
     "cf020": ("biohub-cf020-divranker-float", "Biohub CF020 Divranker Float"),
     "d020rank": ("biohub-d020-divranker-128", "Biohub D020 Divranker 128"),
+    "sweeplab": ("biohub-sweeplab-d020", "Biohub Sweeplab D020"),
 }
+
+SWEEPLAB_KERNEL_SOURCES = ["homeshwarrao/biohub-divlab-v020"]
+
+# Early-stage settings around D020. Values are (global name -> value); every name is asserted to
+# exist before anything runs, so a typo fails immediately instead of silently sweeping nothing.
+SWEEPLAB_CONFIGS = {
+    "base": {},
+    "gap_um_4.5": {"GAP_CLOSE_UM": 4.5},
+    "gap_um_5.5": {"GAP_CLOSE_UM": 5.5},
+    "gap_um_6.0": {"GAP_CLOSE_UM": 6.0},
+    "gap_maxgap1": {"GAP_CLOSE_MAX_GAP": 1},
+    "reuse_2.5": {"GAP_CLOSE_REUSE_UM": 2.5},
+    "reuse_4.0": {"GAP_CLOSE_REUSE_UM": 4.0},
+    "gap_added_0.03": {"GAP_CLOSE_MAX_ADDED_FRAC": 0.03},
+    "gap_added_0.08": {"GAP_CLOSE_MAX_ADDED_FRAC": 0.08},
+    "refine_off": {"GAP_REFINE_SYNTHETIC": False},
+    "refine_shift_2.0": {"GAP_REFINE_MAX_SHIFT_UM": 2.0},
+    "refine_winyx2": {"GAP_REFINE_WIN_YX": 2},
+    "dcgap_0.20": {"DEEPCENTER_GAP_THRESHOLD": 0.20},
+    "dcgap_0.30": {"DEEPCENTER_GAP_THRESHOLD": 0.30},
+    "confirm_span_7": {"DEEPCENTER_GAP_CONFIRM_MIN_SPAN_UM": 7.0},
+    "confirm_span_10": {"DEEPCENTER_GAP_CONFIRM_MIN_SPAN_UM": 10.0},
+    "density_off": {"GAP_DENSITY_ADAPTIVE": False},
+    "tight_5.0": {"MOTION_RELINK_TIGHT_UM": 5.0},
+    "tight_6.0": {"MOTION_RELINK_TIGHT_UM": 6.0},
+    "relaxed_9": {"MOTION_RELINK_RELAXED_UM": 9.0},
+    "relaxed_11": {"MOTION_RELINK_RELAXED_UM": 11.0},
+    "velw_0.3": {"MOTION_RELINK_VELOCITY_WEIGHT": 0.3},
+    "velw_0.7": {"MOTION_RELINK_VELOCITY_WEIGHT": 0.7},
+    "bonus_0.75": {"MOTION_RELINK_LEARNED_BONUS": 0.75},
+    "bonus_1.25": {"MOTION_RELINK_LEARNED_BONUS": 1.25},
+    "edgemax_12": {"OUTPUT_EDGE_MAX_UM": 12.0},
+    "gap2_off": {"OUTPUT_GAP2_RECOVERY": False},
+    "gap2_step_4.0": {"GAP2_MAX_STEP_UM": 4.0},
+    "gap2_total_11": {"GAP2_MAX_TOTAL_UM": 11.0},
+    "single_child_on": {"OUTPUT_SINGLE_CHILD_REPAIR": True},
+}
+
+SWEEPLAB_CELL = r'''# ============================================================
+# SWEEPLAB -- early-stage settings on saved raw predictions (no model inference)
+# ============================================================
+# Raw prediction graphs for the 40 held-out TRAIN clips come from divlab-v020's output. DeepCenter
+# heatmaps are computed once per frame and reused by every setting; the per-(setting, clip)
+# post-processing then runs in forked CPU workers. Final graphs are saved for scoring offline with
+# the organisers' metric.
+import gzip as _sw_gzip
+import multiprocessing as _sw_mp
+import pickle as _sw_pickle
+import shutil as _sw_shutil
+import time as _sw_time
+import zipfile as _sw_zip
+
+SWEEP_CONFIGS = @CONFIGS@
+for _cfg in SWEEP_CONFIGS.values():
+    for _k in _cfg:
+        assert _k in globals(), f"unknown setting {_k}"
+
+_sw_zips = sorted(Path("/kaggle/input").rglob("divlab.zip"))
+assert _sw_zips, "divlab.zip from biohub-divlab-v020 not mounted"
+_sw_src = WORKING_DIR / "sweep_src"
+with _sw_zip.ZipFile(_sw_zips[0]) as _z:
+    _z.extractall(_sw_src, members=[m for m in _z.namelist() if m.startswith("raw_pred/") or m == "val_stems.json"])
+SWEEP_STEMS = json.loads((_sw_src / "val_stems.json").read_text())
+print("SWEEPLAB:", len(SWEEP_STEMS), "clips,", len(SWEEP_CONFIGS), "settings")
+
+globals()["TEST_DIR"] = TRAIN_DIR  # DeepCenter and gap refinement read frames by dataset name
+
+_SW_HEAT: dict = {}
+_sw_orig_heat = deepcenter_heatmap_for_frame
+_sw_t0 = _sw_time.time()
+for _stem in SWEEP_STEMS:
+    _n_frames = int(json.loads((TRAIN_DIR / f"{_stem}.zarr" / "0" / "zarr.json").read_text())["shape"][0])
+    _fc: dict = {}
+    for _t in range(_n_frames):
+        _hm = _sw_orig_heat(_stem, _t, DEEPCENTER_VETO_DETECTOR, _fc, {})
+        _SW_HEAT[(_stem, _t)] = _hm
+        _fc.pop(_t - 1, None)
+print(f"SWEEPLAB: {len(_SW_HEAT)} heatmaps in {(_sw_time.time() - _sw_t0) / 60:.1f} min")
+
+
+def deepcenter_heatmap_for_frame(dataset, t, detector_bundle, frame_cache, heatmap_cache):
+    hm = _SW_HEAT.get((dataset, int(t)))
+    if hm is None:
+        raise RuntimeError(f"SWEEPLAB heatmap cache miss {dataset} t={t}")
+    return hm
+
+
+def _sw_raw(stem):
+    g = graph_from_geff(_sw_src / "raw_pred" / f"{stem}.geff")
+    nodes = {}
+    for row in g.node_attrs().iter_rows(named=True):
+        nid = int(row["node_id"])
+        nodes[nid] = {"node_id": nid, "t": int(row["t"]), "z": float(row["z"]), "y": float(row["y"]), "x": float(row["x"])}
+    edges = []
+    for row in g.edge_attrs().iter_rows(named=True):
+        ep = row.get("edge_prob") if hasattr(row, "get") else None
+        edges.append({"source_id": int(row["source_id"]), "target_id": int(row["target_id"]),
+                      "edge_prob": None if ep is None else float(ep)})
+    return nodes, edges
+
+
+SWEEP_OUT = WORKING_DIR / "sweeplab"
+SWEEP_OUT.mkdir(exist_ok=True)
+
+
+def _sw_task(args):
+    name, stem = args
+    import contextlib, io
+    t0 = _sw_time.time()
+    for k, v in SWEEP_CONFIGS[name].items():
+        globals()[k] = v
+    nodes, edges = _sw_raw(stem)
+    with contextlib.redirect_stdout(io.StringIO()):
+        out_nodes, out_edges, stats = filter_output_graph(nodes, edges, dataset=stem,
+                                                          deepcenter_bundle=DEEPCENTER_VETO_DETECTOR)
+    rec = {
+        "nodes_by_id": {int(k): {"t": int(v["t"]), "z": float(v["z"]), "y": float(v["y"]), "x": float(v["x"])}
+                        for k, v in out_nodes.items()},
+        "edges": [{"source_id": int(e["source_id"]), "target_id": int(e["target_id"])} for e in out_edges],
+        "stats": {k: v for k, v in stats.items() if isinstance(v, (int, float))},
+    }
+    (SWEEP_OUT / name).mkdir(exist_ok=True)
+    with _sw_gzip.open(SWEEP_OUT / name / f"{stem}.pkl.gz", "wb") as fh:
+        _sw_pickle.dump(rec, fh, protocol=4)
+    return name, stem, _sw_time.time() - t0
+
+
+_sw_tasks = [(n, s_) for n in SWEEP_CONFIGS for s_ in SWEEP_STEMS]
+_sw_t0 = _sw_time.time()
+_ctx = _sw_mp.get_context("fork")
+with _ctx.Pool(4) as _pool:
+    for _i, (_n, _s, _dt) in enumerate(_pool.imap_unordered(_sw_task, _sw_tasks, chunksize=1), 1):
+        if _i % 40 == 0 or _i == len(_sw_tasks):
+            print(f"SWEEPLAB: {_i}/{len(_sw_tasks)} done, last {_n}/{_s} {_dt:.0f}s, "
+                  f"elapsed {(_sw_time.time() - _sw_t0) / 60:.1f} min", flush=True)
+
+(SWEEP_OUT / "configs.json").write_text(json.dumps(SWEEP_CONFIGS, indent=1, default=str))
+_sw_shutil.make_archive(str(WORKING_DIR / "sweeplab"), "zip", str(SWEEP_OUT))
+print("SWEEPLAB: wrote", WORKING_DIR / "sweeplab.zip")
+'''.replace("@CONFIGS@", repr(SWEEPLAB_CONFIGS))
 
 # v020 (our real 0.947). Its validator sweep selected tight55 in the scored run; the lab fixes that
 # setting and removes the sweep so snapshots describe exactly one, known configuration.
@@ -422,15 +563,18 @@ def apply_divlab020(nb: dict, n_per_type: int = 20) -> None:
 def build(kind: str) -> Path:
     slug, title = BUILDS[kind]
     assert slugify(title) == slug, (title, slug)
-    nb = json.loads((V020_NB if kind in ("divlab020", "divlab020big", "c020rank", "f020float", "cf020", "d020rank") else BASE_NB)
+    nb = json.loads((V020_NB if kind in ("divlab020", "divlab020big", "c020rank", "f020float", "cf020", "d020rank", "sweeplab") else BASE_NB)
                     .read_text(encoding="utf-8"))
     if kind == "divlab020big":
         # 64 per embryo: all of 44b6's 71 clips but 7, half of 6bba's 128; division clips first.
         apply_divlab020(nb, n_per_type=64)
     if kind in ("c020rank", "cf020"):
         apply_c020(nb)
-    if kind == "d020rank":
+    if kind in ("d020rank", "sweeplab"):
         apply_c020(nb, coef=D020_COEF, intercept=D020_INTERCEPT)
+    if kind == "sweeplab":
+        nb["cells"].append(_code_cell(SWEEPLAB_CELL))
+        print("  applied: sweeplab cell (31 settings x 40 clips on saved raw predictions)")
     if kind == "f020float":
         apply_v020_fixed(nb, F020_ENV)
     if kind in ("f020float", "cf020"):
@@ -472,7 +616,7 @@ def build(kind: str) -> Path:
         "enable_gpu": "true", "machine_shape": "NvidiaTeslaT4",  # M012
         "enable_internet": "false",
         "competition_sources": [COMPETITION], "dataset_sources": DATASET_SOURCES,
-        "kernel_sources": [],
+        "kernel_sources": SWEEPLAB_KERNEL_SOURCES if kind == "sweeplab" else [],
     }
     (out_dir / "kernel-metadata.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
     print(f"wrote {out_dir / (slug + '.ipynb')}")
