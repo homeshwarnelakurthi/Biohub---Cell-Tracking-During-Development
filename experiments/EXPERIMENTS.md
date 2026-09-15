@@ -450,3 +450,10 @@ stability (6x the training positives), not a public gain.
 **D020 submitted** (2026-09-15). Output checks: validation OK, integer coordinates, 241,321 rows vs
 C020's 241,292, 0.3% of node rows differ (knock-on of different division choices), 83 safe divisions
 vs C020's 95 on the 4 interactive test clips.
+
+**Ranker robustness on 128 clips** (out-of-embryo weights, logit >= 3; reference 44b6 0.9198 /
+6bba 0.9163 / ALL 0.9174). Gate widths and caps are a plateau - no variant improves both embryos
+beyond noise: tighter gates -0.0009, wider -0.0002, parent 9 um 0.0000, sister 13 um -0.0010,
+caps x2 +0.0006 (44b6 -0.0004), caps x0.5 -0.0007. Model variants (L2 0.1-10, interaction terms,
+three extra features) do not beat the 7-feature logistic out-of-embryo (6bba AUC 0.910 base vs
+0.876-0.913). The shipped D020 configuration is not sitting on a knife edge.
