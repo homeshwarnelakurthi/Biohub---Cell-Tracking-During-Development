@@ -457,3 +457,8 @@ beyond noise: tighter gates -0.0009, wider -0.0002, parent 9 um 0.0000, sister 1
 caps x2 +0.0006 (44b6 -0.0004), caps x0.5 -0.0007. Model variants (L2 0.1-10, interaction terms,
 three extra features) do not beat the 7-feature logistic out-of-embryo (6bba AUC 0.910 base vs
 0.876-0.913). The shipped D020 configuration is not sitting on a knife edge.
+
+**D020 RESULT: 0.952** (C020 0.951; pre-registered 0.950-0.953, most likely 0.951-0.952). New best,
+rank 38/3555 at submission time. The +0.001 is at the noise floor, as predicted from the ~+0.002
+out-of-sample replay gain; the case for D020 remains the 6x larger training set for the private
+split.
